@@ -18,7 +18,7 @@ def get_price():
         d = r.json()
         price_per_gram = d.get("price_gram_24k", 0)
         if price_per_gram > 1000:
-            mcx_price = round(price_per_gram * 10)
+            mcx_price = round(price_per_gram * 10 * 1.09)
             return {"price": mcx_price, "usd_oz": d.get("price", 0), "usd_inr": round(d.get("price", 0) / (price_per_gram / 31.1035), 2), "source": "goldapi.io"}
     except Exception as e:
         print(f"GoldAPI failed: {e}")
@@ -30,7 +30,7 @@ def get_price():
         r2 = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/USDINR=X", headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
         usd_inr = r2.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
         if usd_oz > 1000 and usd_inr > 70:
-            mcx_price = round(usd_oz * usd_inr * (10 / 31.1035) * 1.0838)
+            mcx_price = round(usd_oz * usd_inr * (10 / 31.1035) * 1.09)
             if 100000 < mcx_price < 300000:
                 return {"price": mcx_price, "usd_oz": round(usd_oz,2), "usd_inr": round(usd_inr,4), "source": "Yahoo+duty"}
     except Exception as e:
