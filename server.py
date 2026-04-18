@@ -1,8 +1,8 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests, os, json, re
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import pg8000.native
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 CORS(app)
@@ -12,13 +12,29 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-    return conn
+    url = urlparse(DATABASE_URL)
+    return pg8000.native.Connection(
+        user=url.username,
+        password=url.password,
+        host=url.hostname,
+        port=url.port or 5432,
+        database=url.path.lstrip('/')
+    )
+
+def _to_dicts(conn, rows):
+    cols = [c['name'] for c in conn.columns]
+    result = []
+    for row in rows:
+        d = dict(zip(cols, row))
+        for k, v in d.items():
+            if hasattr(v, 'isoformat'):
+                d[k] = v.isoformat()
+        result.append(d)
+    return result
 
 def init_db():
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
+    conn.run("""
         CREATE TABLE IF NOT EXISTS signals (
             id SERIAL PRIMARY KEY,
             type VARCHAR(10) NOT NULL,
@@ -32,8 +48,6 @@ def init_db():
             notes TEXT
         )
     """)
-    conn.commit()
-    cur.close()
     conn.close()
 
 try:
@@ -83,16 +97,10 @@ def health():
 @app.route("/signals", methods=["GET"])
 def get_signals():
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM signals WHERE status = 'open' ORDER BY created_at DESC")
-    rows = [dict(r) for r in cur.fetchall()]
-    cur.close()
+    rows = conn.run("SELECT * FROM signals WHERE status = 'open' ORDER BY created_at DESC")
+    result = _to_dicts(conn, rows)
     conn.close()
-    for row in rows:
-        for k, v in row.items():
-            if hasattr(v, 'isoformat'):
-                row[k] = v.isoformat()
-    return jsonify(rows)
+    return jsonify(result)
 
 @app.route("/signals", methods=["POST"])
 def create_signal():
@@ -100,56 +108,43 @@ def create_signal():
     if not data or "type" not in data:
         return jsonify({"error": "type is required"}), 400
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
+    rows = conn.run(
         """INSERT INTO signals (type, entry_price, target, stop_loss, notes)
-           VALUES (%s, %s, %s, %s, %s) RETURNING *""",
-        (data["type"], data.get("entry_price"), data.get("target"), data.get("stop_loss"), data.get("notes"))
+           VALUES (:type, :entry_price, :target, :stop_loss, :notes) RETURNING *""",
+        type=data["type"],
+        entry_price=data.get("entry_price"),
+        target=data.get("target"),
+        stop_loss=data.get("stop_loss"),
+        notes=data.get("notes")
     )
-    row = dict(cur.fetchone())
-    conn.commit()
-    cur.close()
+    row = _to_dicts(conn, rows)[0]
     conn.close()
-    for k, v in row.items():
-        if hasattr(v, 'isoformat'):
-            row[k] = v.isoformat()
     return jsonify(row), 201
 
 @app.route("/signals/<int:signal_id>/close", methods=["POST"])
 def close_signal(signal_id):
     data = request.get_json() or {}
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        """UPDATE signals SET status = 'closed', closed_at = NOW(), close_price = %s
-           WHERE id = %s AND status = 'open' RETURNING *""",
-        (data.get("close_price"), signal_id)
+    rows = conn.run(
+        """UPDATE signals SET status = 'closed', closed_at = NOW(), close_price = :close_price
+           WHERE id = :id AND status = 'open' RETURNING *""",
+        close_price=data.get("close_price"),
+        id=signal_id
     )
-    row = cur.fetchone()
-    conn.commit()
-    cur.close()
-    conn.close()
-    if not row:
+    if not rows:
+        conn.close()
         return jsonify({"error": "signal not found or already closed"}), 404
-    row = dict(row)
-    for k, v in row.items():
-        if hasattr(v, 'isoformat'):
-            row[k] = v.isoformat()
+    row = _to_dicts(conn, rows)[0]
+    conn.close()
     return jsonify(row)
 
 @app.route("/signals/history", methods=["GET"])
 def signals_history():
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM signals WHERE status = 'closed' ORDER BY closed_at DESC")
-    rows = [dict(r) for r in cur.fetchall()]
-    cur.close()
+    rows = conn.run("SELECT * FROM signals WHERE status = 'closed' ORDER BY closed_at DESC")
+    result = _to_dicts(conn, rows)
     conn.close()
-    for row in rows:
-        for k, v in row.items():
-            if hasattr(v, 'isoformat'):
-                row[k] = v.isoformat()
-    return jsonify(rows)
+    return jsonify(result)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
