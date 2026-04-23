@@ -55,36 +55,70 @@ try:
 except Exception as e:
     print(f"DB init warning: {e}")
 
-def get_price():
-    # Method 1: GoldAPI.io - direct INR price per gram
+def get_usd_inr():
+    """Fetch USD/INR rate. Frankfurter API primary, Yahoo fallback."""
+    try:
+        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=8)
+        rate = r.json()["rates"]["INR"]
+        if rate > 70:
+            return round(rate, 4)
+    except Exception as e:
+        print(f"Frankfurter failed: {e}")
+
+    try:
+        r = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/USDINR=X", headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+        rate = r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
+        if rate > 70:
+            return round(rate, 4)
+    except Exception as e:
+        print(f"Yahoo USD/INR failed: {e}")
+
+    return None
+
+def get_gold_usd():
+    """Fetch gold price in USD/oz. GoldAPI USD endpoint primary, Yahoo fallback."""
     try:
         r = requests.get(
-            "https://www.goldapi.io/api/XAU/INR",
+            "https://www.goldapi.io/api/XAU/USD",
             headers={"x-access-token": "goldapi-g4mr4smnuf9ldy-io", "Content-Type": "application/json"},
             timeout=8
         )
         d = r.json()
-        price_per_gram = d.get("price_gram_24k", 0)
-        if price_per_gram > 1000:
-            mcx_price = round(price_per_gram * 10 * 1.09)
-            return {"price": mcx_price, "usd_oz": d.get("price", 0), "usd_inr": round(d.get("price", 0) / (price_per_gram / 31.1035), 2), "source": "goldapi.io"}
+        usd_oz = d.get("price", 0)
+        if usd_oz > 1000:
+            return round(usd_oz, 2)
     except Exception as e:
-        print(f"GoldAPI failed: {e}")
+        print(f"GoldAPI USD failed: {e}")
 
-    # Fallback: Yahoo + MCX duty factor
     try:
-        r1 = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/GC=F", headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-        usd_oz = r1.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
-        r2 = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/USDINR=X", headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-        usd_inr = r2.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
-        if usd_oz > 1000 and usd_inr > 70:
-            mcx_price = round(usd_oz * usd_inr * (10 / 31.1035) * 1.09)
-            if 100000 < mcx_price < 300000:
-                return {"price": mcx_price, "usd_oz": round(usd_oz,2), "usd_inr": round(usd_inr,4), "source": "Yahoo+duty"}
+        r = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/GC=F", headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+        usd_oz = r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
+        if usd_oz > 1000:
+            return round(usd_oz, 2)
     except Exception as e:
-        print(f"Yahoo failed: {e}")
+        print(f"Yahoo gold USD failed: {e}")
 
-    return {"price": 155222, "usd_oz": 0, "usd_inr": 0, "source": "cached"}
+    return None
+
+def get_price():
+    usd_oz = get_gold_usd()
+    usd_inr = get_usd_inr()
+
+    if usd_oz and usd_inr:
+        mcx_price = round(usd_oz * usd_inr * (10 / 31.1035) * 1.09)
+        if 50000 < mcx_price < 500000:
+            return {"price": mcx_price, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "live"}
+
+    # Partial data: use what we have with cached fallback for the missing piece
+    fallback_usd_oz = usd_oz or 3300.0
+    fallback_usd_inr = usd_inr or 84.0
+    mcx_price = round(fallback_usd_oz * fallback_usd_inr * (10 / 31.1035) * 1.09)
+    return {
+        "price": mcx_price,
+        "usd_oz": fallback_usd_oz,
+        "usd_inr": fallback_usd_inr,
+        "source": "partial" if (usd_oz or usd_inr) else "cached"
+    }
 
 @app.route("/price")
 def price():
