@@ -2,6 +2,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests, os, json, re
 import pg8000.native
+import pyotp
+from SmartApi import SmartConnect
 from urllib.parse import urlparse
 
 app = Flask(__name__)
@@ -100,17 +102,75 @@ def get_gold_usd():
 
     return None
 
+def get_angel_price():
+    """Fetch live MCX GoldM LTP from Angel One SmartAPI. Returns INR price per 10g or None."""
+    try:
+        api_key    = os.environ.get("ANGEL_API_KEY")
+        client_id  = os.environ.get("ANGEL_CLIENT_ID")
+        pin        = os.environ.get("ANGEL_PIN")
+        totp_secret = os.environ.get("ANGEL_TOTP_SECRET")
+
+        if not all([api_key, client_id, pin, totp_secret]):
+            return None
+
+        totp = pyotp.TOTP(totp_secret).now()
+        obj  = SmartConnect(api_key=api_key)
+        session = obj.generateSession(client_id, pin, totp)
+
+        if not session.get("status"):
+            print(f"Angel login failed: {session.get('message')}")
+            return None
+
+        # Resolve active GoldM futures contract token dynamically
+        search = obj.searchScrip(exchange="MCX", searchscrip="GOLDM")
+        if not search.get("status") or not search.get("data"):
+            print("Angel searchScrip returned no data")
+            return None
+
+        contracts = [s for s in search["data"] if "FUT" in s.get("tradingsymbol", "")]
+        if not contracts:
+            print("No GoldM futures contracts found")
+            return None
+
+        scrip = contracts[0]
+        ltp_resp = obj.ltpData(
+            exchange="MCX",
+            tradingsymbol=scrip["tradingsymbol"],
+            symboltoken=scrip["symboltoken"]
+        )
+
+        if ltp_resp.get("status") and ltp_resp.get("data"):
+            ltp = ltp_resp["data"].get("ltp", 0)
+            if ltp > 10000:
+                return round(ltp)
+    except Exception as e:
+        print(f"Angel SmartAPI failed: {e}")
+
+    return None
+
 def get_price():
-    usd_oz = get_gold_usd()
+    usd_oz  = get_gold_usd()
     usd_inr = get_usd_inr()
 
+    # Primary: Angel One SmartAPI — direct MCX GoldM LTP
+    angel_price = get_angel_price()
+    if angel_price:
+        fallback_usd_inr = usd_inr or 84.0
+        return {
+            "price": angel_price,
+            "usd_oz": usd_oz or round(angel_price / (fallback_usd_inr * (10 / 31.1035) * 1.09), 2),
+            "usd_inr": fallback_usd_inr,
+            "source": "angel"
+        }
+
+    # Secondary: derive MCX price from GoldAPI + Frankfurter
     if usd_oz and usd_inr:
         mcx_price = round(usd_oz * usd_inr * (10 / 31.1035) * 1.09)
         if 50000 < mcx_price < 500000:
             return {"price": mcx_price, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "live"}
 
-    # Partial data: use what we have with cached fallback for the missing piece
-    fallback_usd_oz = usd_oz or 3300.0
+    # Fallback: use what we have, hardcode the missing piece
+    fallback_usd_oz  = usd_oz  or 3300.0
     fallback_usd_inr = usd_inr or 84.0
     mcx_price = round(fallback_usd_oz * fallback_usd_inr * (10 / 31.1035) * 1.09)
     return {
