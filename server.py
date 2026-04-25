@@ -135,8 +135,17 @@ def get_angel_price():
 def get_price():
     angel_price = get_angel_price()
     if angel_price:
-        return {"price": angel_price, "usd_oz": 0, "usd_inr": 0, "source": "angel"}
-    return {"price": 0, "usd_oz": 0, "usd_inr": 0, "source": "unavailable"}
+        result = {"price": angel_price, "usd_oz": 0, "usd_inr": 0, "source": "angel"}
+    else:
+        result = {"price": 0, "usd_oz": 0, "usd_inr": 0, "source": "unavailable"}
+
+    missing = [f for f in ("price", "usd_oz", "usd_inr") if not result.get(f)]
+    if missing:
+        result["data_quality"] = "partial"
+        result["missing_fields"] = missing
+    else:
+        result["data_quality"] = "complete"
+    return result
 
 @app.route("/price")
 def price():
