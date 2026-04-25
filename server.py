@@ -179,36 +179,19 @@ def get_angel_price():
     return None
 
 def get_price():
+    angel_price = get_angel_price()
     usd_oz  = get_gold_usd()
     usd_inr = get_usd_inr()
 
-    # Primary: Angel One SmartAPI — direct MCX GoldM LTP
-    angel_price = get_angel_price()
+    # Primary: Angel One — direct MCX GoldM LTP
     if angel_price:
-        fallback_usd_inr = usd_inr or 84.0
-        return {
-            "price": angel_price,
-            "usd_oz": usd_oz or round(angel_price / (fallback_usd_inr * (10 / 31.1035) * 1.09), 2),
-            "usd_inr": fallback_usd_inr,
-            "source": "angel"
-        }
+        return {"price": angel_price, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "angel"}
 
-    # Secondary: derive MCX price from GoldAPI + Frankfurter
+    # Secondary: GoldAPI + Frankfurter spot conversion
     if usd_oz and usd_inr:
-        mcx_price = round(usd_oz * usd_inr * (10 / 31.1035) * 1.09)
-        if 50000 < mcx_price < 500000:
-            return {"price": mcx_price, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "live"}
+        return {"price": round(usd_oz * usd_inr * 10 / 31.1035), "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "goldapi"}
 
-    # Fallback: use what we have, hardcode the missing piece
-    fallback_usd_oz  = usd_oz  or 3300.0
-    fallback_usd_inr = usd_inr or 84.0
-    mcx_price = round(fallback_usd_oz * fallback_usd_inr * (10 / 31.1035) * 1.09)
-    return {
-        "price": mcx_price,
-        "usd_oz": fallback_usd_oz,
-        "usd_inr": fallback_usd_inr,
-        "source": "partial" if (usd_oz or usd_inr) else "cached"
-    }
+    return {"price": 0, "source": "unavailable"}
 
 @app.route("/price")
 def price():
