@@ -3,7 +3,6 @@ from flask_cors import CORS
 import requests, os, json, re
 import pg8000.native
 import pyotp
-from SmartApi import SmartConnect
 from urllib.parse import urlparse
 
 app = Flask(__name__)
@@ -102,49 +101,80 @@ def get_gold_usd():
 
     return None
 
+ANGEL_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "X-UserType": "USER",
+    "X-SourceID": "WEB",
+    "X-ClientLocalIP": "127.0.0.1",
+    "X-ClientPublicIP": "127.0.0.1",
+    "X-MACAddress": "00:00:00:00:00:00",
+}
+
 def get_angel_price():
-    """Fetch live MCX GoldM LTP from Angel One SmartAPI. Returns INR price per 10g or None."""
+    """Fetch live MCX GoldM LTP via Angel One REST API. Returns INR price per 10g or None."""
     try:
-        api_key    = os.environ.get("ANGEL_API_KEY")
-        client_id  = os.environ.get("ANGEL_CLIENT_ID")
-        pin        = os.environ.get("ANGEL_PIN")
+        api_key     = os.environ.get("ANGEL_API_KEY")
+        client_id   = os.environ.get("ANGEL_CLIENT_ID")
+        pin         = os.environ.get("ANGEL_PIN")
         totp_secret = os.environ.get("ANGEL_TOTP_SECRET")
 
         if not all([api_key, client_id, pin, totp_secret]):
             return None
 
         totp = pyotp.TOTP(totp_secret).now()
-        obj  = SmartConnect(api_key=api_key)
-        session = obj.generateSession(client_id, pin, totp)
+        login_headers = {**ANGEL_HEADERS, "X-PrivateKey": api_key}
 
-        if not session.get("status"):
-            print(f"Angel login failed: {session.get('message')}")
+        # Step 1: Login
+        auth_resp = requests.post(
+            "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword",
+            json={"clientcode": client_id, "password": pin, "totp": totp},
+            headers=login_headers,
+            timeout=10
+        )
+        auth_data = auth_resp.json()
+        if not auth_data.get("status"):
+            print(f"Angel login failed: {auth_data.get('message')}")
             return None
 
-        # Resolve active GoldM futures contract token dynamically
-        search = obj.searchScrip(exchange="MCX", searchscrip="GOLDM")
-        if not search.get("status") or not search.get("data"):
+        jwt_token = auth_data["data"]["jwtToken"]
+        auth_headers = {**login_headers, "Authorization": f"Bearer {jwt_token}"}
+
+        # Step 2: Search for active GoldM futures contract to get symbol token
+        search_resp = requests.get(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/searchScrip",
+            params={"exchange": "MCX", "searchscrip": "GOLDM"},
+            headers=auth_headers,
+            timeout=10
+        )
+        search_data = search_resp.json()
+        if not search_data.get("status") or not search_data.get("data"):
             print("Angel searchScrip returned no data")
             return None
 
-        contracts = [s for s in search["data"] if "FUT" in s.get("tradingsymbol", "")]
+        contracts = [s for s in search_data["data"] if "FUT" in s.get("tradingsymbol", "")]
         if not contracts:
             print("No GoldM futures contracts found")
             return None
 
-        scrip = contracts[0]
-        ltp_resp = obj.ltpData(
-            exchange="MCX",
-            tradingsymbol=scrip["tradingsymbol"],
-            symboltoken=scrip["symboltoken"]
-        )
+        token = contracts[0]["symboltoken"]
 
-        if ltp_resp.get("status") and ltp_resp.get("data"):
-            ltp = ltp_resp["data"].get("ltp", 0)
-            if ltp > 10000:
-                return round(ltp)
+        # Step 3: Fetch LTP
+        ltp_resp = requests.post(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/",
+            json={"mode": "LTP", "exchangeTokens": {"MCX": [token]}},
+            headers=auth_headers,
+            timeout=10
+        )
+        ltp_data = ltp_resp.json()
+        if ltp_data.get("status") and ltp_data.get("data"):
+            fetched = ltp_data["data"].get("fetched", [])
+            if fetched:
+                ltp = fetched[0].get("ltp", 0)
+                if ltp > 10000:
+                    return round(ltp)
     except Exception as e:
-        print(f"Angel SmartAPI failed: {e}")
+        print(f"Angel REST API failed: {e}")
 
     return None
 
