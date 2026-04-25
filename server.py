@@ -1,14 +1,12 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import requests, os, json, re
+import requests, os
 import pg8000.native
 import pyotp
 from urllib.parse import urlparse
 
 app = Flask(__name__)
 CORS(app)
-
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"}
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -56,50 +54,6 @@ try:
 except Exception as e:
     print(f"DB init warning: {e}")
 
-def get_usd_inr():
-    """Fetch USD/INR rate. Frankfurter API primary, Yahoo fallback."""
-    try:
-        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=8)
-        rate = r.json()["rates"]["INR"]
-        if rate > 70:
-            return round(rate, 4)
-    except Exception as e:
-        print(f"Frankfurter failed: {e}")
-
-    try:
-        r = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/USDINR=X", headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-        rate = r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
-        if rate > 70:
-            return round(rate, 4)
-    except Exception as e:
-        print(f"Yahoo USD/INR failed: {e}")
-
-    return None
-
-def get_gold_usd():
-    """Fetch gold price in USD/oz. GoldAPI USD endpoint primary, Yahoo fallback."""
-    try:
-        r = requests.get(
-            "https://www.goldapi.io/api/XAU/USD",
-            headers={"x-access-token": "goldapi-g4mr4smnuf9ldy-io", "Content-Type": "application/json"},
-            timeout=8
-        )
-        d = r.json()
-        usd_oz = d.get("price", 0)
-        if usd_oz > 1000:
-            return round(usd_oz, 2)
-    except Exception as e:
-        print(f"GoldAPI USD failed: {e}")
-
-    try:
-        r = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/GC=F", headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-        usd_oz = r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
-        if usd_oz > 1000:
-            return round(usd_oz, 2)
-    except Exception as e:
-        print(f"Yahoo gold USD failed: {e}")
-
-    return None
 
 ANGEL_HEADERS = {
     "Content-Type": "application/json",
@@ -180,18 +134,9 @@ def get_angel_price():
 
 def get_price():
     angel_price = get_angel_price()
-    usd_oz  = get_gold_usd()
-    usd_inr = get_usd_inr()
-
-    # Primary: Angel One — direct MCX GoldM LTP
     if angel_price:
-        return {"price": angel_price, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "angel"}
-
-    # Secondary: GoldAPI + Frankfurter spot conversion
-    if usd_oz and usd_inr:
-        return {"price": round(usd_oz * usd_inr * 10 / 31.1035), "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "goldapi"}
-
-    return {"price": 0, "source": "unavailable"}
+        return {"price": angel_price, "usd_oz": 0, "usd_inr": 0, "source": "angel"}
+    return {"price": 0, "usd_oz": 0, "usd_inr": 0, "source": "unavailable"}
 
 @app.route("/price")
 def price():
