@@ -142,7 +142,7 @@ MACRO_SYMBOLS = {
 }
 
 def get_usd_inr():
-    """Fetch USD/INR rate. Tries 3 live sources then falls back to hardcoded 84.2."""
+    """Fetch USD/INR rate. Tries 3 live sources, returns None if all fail."""
     try:
         r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=8)
         rate = r.json()["rates"]["INR"]
@@ -172,8 +172,8 @@ def get_usd_inr():
     except Exception as e:
         print(f"Yahoo INR=X failed: {e}")
 
-    print("USD/INR source: hardcoded fallback (84.2)")
-    return 84.2
+    print("USD/INR: all sources failed, returning None")
+    return None
 
 def get_macro_data():
     result = {}
