@@ -132,6 +132,36 @@ def get_angel_price():
 
     return None
 
+YAHOO_HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+MACRO_SYMBOLS = {
+    "dxy":        "DX-Y.NYB",
+    "us10y":      "^TNX",
+    "crude_oil":  "CL=F",
+    "usd_inr":    "USDINR=X",
+    "sp500":      "^GSPC",
+}
+
+def get_macro_data():
+    result = {}
+    for key, symbol in MACRO_SYMBOLS.items():
+        try:
+            r = requests.get(
+                f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}",
+                headers=YAHOO_HEADERS,
+                timeout=8
+            )
+            meta = r.json()["chart"]["result"][0]["meta"]
+            result[key] = {
+                "symbol": symbol,
+                "price":  meta.get("regularMarketPrice"),
+                "change_pct": meta.get("regularMarketChangePercent"),
+            }
+        except Exception as e:
+            print(f"Macro fetch failed for {symbol}: {e}")
+            result[key] = {"symbol": symbol, "price": None, "change_pct": None}
+    return result
+
 def get_price():
     angel_price = get_angel_price()
     if angel_price:
@@ -145,11 +175,17 @@ def get_price():
         result["missing_fields"] = missing
     else:
         result["data_quality"] = "complete"
+
+    result["macro_data"] = get_macro_data()
     return result
 
 @app.route("/price")
 def price():
     return jsonify(get_price())
+
+@app.route("/macro")
+def macro():
+    return jsonify(get_macro_data())
 
 @app.route("/health")
 def health():
