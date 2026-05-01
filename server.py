@@ -74,6 +74,7 @@ def get_angel_price():
         totp_secret = os.environ.get("ANGEL_TOTP_SECRET")
 
         if not all([api_key, client_id, pin, totp_secret]):
+            print("Angel: missing env vars")
             return None
 
         totp = pyotp.TOTP(totp_secret).now()
@@ -86,9 +87,10 @@ def get_angel_price():
             headers=login_headers,
             timeout=10
         )
+        print(f"Angel login: status={auth_resp.status_code} body={auth_resp.text[:300]}")
         auth_data = auth_resp.json()
         if not auth_data.get("status"):
-            print(f"Angel login failed: {auth_data.get('message')}")
+            print(f"Angel login failed: {auth_data.get('message')} errorcode={auth_data.get('errorcode')}")
             return None
 
         jwt_token = auth_data["data"]["jwtToken"]
@@ -101,17 +103,19 @@ def get_angel_price():
             headers=auth_headers,
             timeout=10
         )
+        print(f"Angel searchScrip: status={search_resp.status_code} body={search_resp.text[:300]}")
         search_data = search_resp.json()
         if not search_data.get("status") or not search_data.get("data"):
-            print("Angel searchScrip returned no data")
+            print(f"Angel searchScrip failed: {search_data.get('message')} errorcode={search_data.get('errorcode')}")
             return None
 
         contracts = [s for s in search_data["data"] if "FUT" in s.get("tradingsymbol", "")]
         if not contracts:
-            print("No GoldM futures contracts found")
+            print(f"No GoldM futures contracts found in {[s.get('tradingsymbol') for s in search_data['data']]}")
             return None
 
         token = contracts[0]["symboltoken"]
+        print(f"Angel: using contract {contracts[0].get('tradingsymbol')} token={token}")
 
         # Step 3: Fetch LTP
         ltp_resp = requests.post(
@@ -120,15 +124,21 @@ def get_angel_price():
             headers=auth_headers,
             timeout=10
         )
+        print(f"Angel LTP: status={ltp_resp.status_code} body={ltp_resp.text[:300]}")
         ltp_data = ltp_resp.json()
         if ltp_data.get("status") and ltp_data.get("data"):
             fetched = ltp_data["data"].get("fetched", [])
             if fetched:
                 ltp = fetched[0].get("ltp", 0)
+                print(f"Angel LTP value: {ltp}")
                 if ltp > 10000:
                     return round(ltp)
+            else:
+                print(f"Angel LTP: empty fetched list, full data={ltp_data['data']}")
+        else:
+            print(f"Angel LTP failed: {ltp_data.get('message')} errorcode={ltp_data.get('errorcode')}")
     except Exception as e:
-        print(f"Angel REST API failed: {e}")
+        print(f"Angel REST API exception: {e}")
 
     return None
 
