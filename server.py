@@ -135,12 +135,45 @@ def get_angel_price():
 YAHOO_HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 MACRO_SYMBOLS = {
-    "dxy":        "DX-Y.NYB",
-    "us10y":      "^TNX",
-    "crude_oil":  "CL=F",
-    "usd_inr":    "USDINR=X",
-    "sp500":      "^GSPC",
+    "dxy":       "DX-Y.NYB",
+    "us10y":     "^TNX",
+    "crude_oil": "CL=F",
+    "sp500":     "^GSPC",
 }
+
+def get_usd_inr():
+    """Fetch USD/INR rate. Tries 3 live sources then falls back to hardcoded 84.2."""
+    try:
+        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=8)
+        rate = r.json()["rates"]["INR"]
+        if rate > 70:
+            print(f"USD/INR source: Frankfurter ({rate})")
+            return round(rate, 4)
+    except Exception as e:
+        print(f"Frankfurter USD/INR failed: {e}")
+
+    try:
+        r = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/USDINR=X",
+                         headers=YAHOO_HEADERS, timeout=8)
+        rate = r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
+        if rate > 70:
+            print(f"USD/INR source: Yahoo USDINR=X ({rate})")
+            return round(rate, 4)
+    except Exception as e:
+        print(f"Yahoo USDINR=X failed: {e}")
+
+    try:
+        r = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/INR=X",
+                         headers=YAHOO_HEADERS, timeout=8)
+        rate = r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
+        if rate > 70:
+            print(f"USD/INR source: Yahoo INR=X ({rate})")
+            return round(rate, 4)
+    except Exception as e:
+        print(f"Yahoo INR=X failed: {e}")
+
+    print("USD/INR source: hardcoded fallback (84.2)")
+    return 84.2
 
 def get_macro_data():
     result = {}
@@ -152,14 +185,17 @@ def get_macro_data():
                 timeout=8
             )
             meta = r.json()["chart"]["result"][0]["meta"]
+            print(f"Macro fetch succeeded for {symbol}")
             result[key] = {
-                "symbol": symbol,
-                "price":  meta.get("regularMarketPrice"),
+                "symbol":     symbol,
+                "price":      meta.get("regularMarketPrice"),
                 "change_pct": meta.get("regularMarketChangePercent"),
             }
         except Exception as e:
             print(f"Macro fetch failed for {symbol}: {e}")
             result[key] = {"symbol": symbol, "price": None, "change_pct": None}
+
+    result["usd_inr"] = {"symbol": "USDINR=X", "price": get_usd_inr(), "change_pct": None}
     return result
 
 def get_price():
