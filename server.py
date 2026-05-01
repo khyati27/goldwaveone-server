@@ -142,7 +142,7 @@ MACRO_SYMBOLS = {
 }
 
 def get_usd_inr():
-    """Fetch USD/INR rate. Tries 3 live sources, returns None if all fail."""
+    """Fetch USD/INR rate from Frankfurter API. Returns None if fetch fails."""
     try:
         r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=8)
         rate = r.json()["rates"]["INR"]
@@ -152,27 +152,7 @@ def get_usd_inr():
     except Exception as e:
         print(f"Frankfurter USD/INR failed: {e}")
 
-    try:
-        r = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/USDINR=X",
-                         headers=YAHOO_HEADERS, timeout=8)
-        rate = r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
-        if rate > 70:
-            print(f"USD/INR source: Yahoo USDINR=X ({rate})")
-            return round(rate, 4)
-    except Exception as e:
-        print(f"Yahoo USDINR=X failed: {e}")
-
-    try:
-        r = requests.get("https://query2.finance.yahoo.com/v8/finance/chart/INR=X",
-                         headers=YAHOO_HEADERS, timeout=8)
-        rate = r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
-        if rate > 70:
-            print(f"USD/INR source: Yahoo INR=X ({rate})")
-            return round(rate, 4)
-    except Exception as e:
-        print(f"Yahoo INR=X failed: {e}")
-
-    print("USD/INR: all sources failed, returning None")
+    print("USD/INR: Frankfurter failed, returning None")
     return None
 
 def get_macro_data():
