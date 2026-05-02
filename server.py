@@ -189,22 +189,24 @@ def get_macro_data():
     result["usd_inr"] = {"symbol": "USDINR=X", "price": get_usd_inr(), "change_pct": None}
     return result
 
+TRUEDATA_SYMBOLS = ["GOLDM-I", "GOLDM", "GOLDMI", "MCX:GOLDM"]
+
 def get_truedata_price():
-    """Fetch live MCX GoldM LTP from TrueData REST API. Returns price or None."""
-    try:
-        r = requests.post(
-            "https://api.truedata.in/getltp",
-            json={"user_id": "trial881", "password": "khyati881", "symbols": ["GOLDM-I"]},
-            timeout=10
-        )
-        print(f"TrueData: status={r.status_code} body={r.text[:300]}")
-        ltp = r.json().get("ltp", 0)
-        if ltp and ltp > 10000:
-            print(f"TrueData LTP: {ltp}")
-            return round(ltp)
-        print(f"TrueData: invalid ltp value {ltp}")
-    except Exception as e:
-        print(f"TrueData failed: {e}")
+    """Try each symbol format against TrueData, print full response for each. Returns first valid LTP or None."""
+    for symbol in TRUEDATA_SYMBOLS:
+        try:
+            r = requests.post(
+                "https://api.truedata.in/getltp",
+                json={"user_id": "trial881", "password": "khyati881", "symbols": [symbol]},
+                timeout=10
+            )
+            print(f"TrueData [{symbol}]: status={r.status_code} body={r.text}")
+            ltp = r.json().get("ltp", 0)
+            if ltp and ltp > 10000:
+                print(f"TrueData [{symbol}]: valid LTP={ltp}")
+                return round(ltp)
+        except Exception as e:
+            print(f"TrueData [{symbol}]: exception {e}")
     return None
 
 def get_price():
