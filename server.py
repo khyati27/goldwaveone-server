@@ -255,6 +255,10 @@ def get_price():
 
     if price:
         result = {"price": price, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": source}
+    elif usd_oz and usd_inr:
+        calc_price = round(usd_oz * usd_inr * (10 / 31.1035) * 1.09)
+        print(f"Calculated MCX price: {calc_price} (usd_oz={usd_oz}, usd_inr={usd_inr})")
+        result = {"price": calc_price, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "calculated"}
     else:
         result = {"price": 0, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "unavailable"}
 
