@@ -149,6 +149,7 @@ MACRO_SYMBOLS = {
     "us10y":     "^TNX",
     "crude_oil": "CL=F",
     "sp500":     "^GSPC",
+    "gold_usd":  "GC=F",
 }
 
 def get_usd_inr():
@@ -188,12 +189,39 @@ def get_macro_data():
     result["usd_inr"] = {"symbol": "USDINR=X", "price": get_usd_inr(), "change_pct": None}
     return result
 
+def get_truedata_price():
+    """Fetch live MCX GoldM LTP from TrueData REST API. Returns price or None."""
+    try:
+        r = requests.post(
+            "https://api.truedata.in/getltp",
+            params={"symbol": "GOLDM", "td_app_user": "trial881", "td_app_password": "khyati881"},
+            timeout=10
+        )
+        print(f"TrueData: status={r.status_code} body={r.text[:300]}")
+        ltp = r.json().get("ltp", 0)
+        if ltp and ltp > 10000:
+            print(f"TrueData LTP: {ltp}")
+            return round(ltp)
+        print(f"TrueData: invalid ltp value {ltp}")
+    except Exception as e:
+        print(f"TrueData failed: {e}")
+    return None
+
 def get_price():
-    angel_price = get_angel_price()
-    if angel_price:
-        result = {"price": angel_price, "usd_oz": 0, "usd_inr": 0, "source": "angel"}
+    macro = get_macro_data()
+    usd_inr = macro.get("usd_inr", {}).get("price")
+    usd_oz  = macro.get("gold_usd", {}).get("price")
+
+    price = get_truedata_price()
+    source = "truedata"
+    if not price:
+        price = get_angel_price()
+        source = "angel"
+
+    if price:
+        result = {"price": price, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": source}
     else:
-        result = {"price": 0, "usd_oz": 0, "usd_inr": 0, "source": "unavailable"}
+        result = {"price": 0, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "unavailable"}
 
     missing = [f for f in ("price", "usd_oz", "usd_inr") if not result.get(f)]
     if missing:
@@ -202,7 +230,7 @@ def get_price():
     else:
         result["data_quality"] = "complete"
 
-    result["macro_data"] = get_macro_data()
+    result["macro_data"] = macro
     return result
 
 @app.route("/price")
