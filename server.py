@@ -189,24 +189,57 @@ def get_macro_data():
     result["usd_inr"] = {"symbol": "USDINR=X", "price": get_usd_inr(), "change_pct": None}
     return result
 
-TRUEDATA_SYMBOLS = ["GOLDM-I", "GOLDM", "GOLDMI", "MCX:GOLDM"]
+TRUEDATA_CREDS = {"user_id": "trial881", "password": "khyati881"}
 
 def get_truedata_price():
-    """Try each symbol format against TrueData, print full response for each. Returns first valid LTP or None."""
-    for symbol in TRUEDATA_SYMBOLS:
-        try:
-            r = requests.post(
-                "https://api.truedata.in/getltp",
-                json={"user_id": "trial881", "password": "khyati881", "symbols": [symbol]},
-                timeout=10
-            )
-            print(f"TrueData [{symbol}]: status={r.status_code} body={r.text}")
-            ltp = r.json().get("ltp", 0)
-            if ltp and ltp > 10000:
-                print(f"TrueData [{symbol}]: valid LTP={ltp}")
-                return round(ltp)
-        except Exception as e:
-            print(f"TrueData [{symbol}]: exception {e}")
+    """Probe TrueData endpoints for MCX GoldM LTP. Prints status and response for each."""
+    symbol = "GOLDM-I"
+
+    # Endpoint 1: GET /marketdata/ltp
+    try:
+        r = requests.get(
+            "https://api.truedata.in/marketdata/ltp",
+            params={**TRUEDATA_CREDS, "symbol": symbol},
+            timeout=10
+        )
+        print(f"TrueData ep1 GET /marketdata/ltp: status={r.status_code} body={r.text[:500]}")
+        ltp = r.json().get("ltp", 0)
+        if ltp and ltp > 10000:
+            print(f"TrueData ep1: valid LTP={ltp}")
+            return round(ltp)
+    except Exception as e:
+        print(f"TrueData ep1 exception: {e}")
+
+    # Endpoint 2: GET /ltp
+    try:
+        r = requests.get(
+            "https://api.truedata.in/ltp",
+            params={**TRUEDATA_CREDS, "symbol": symbol},
+            timeout=10
+        )
+        print(f"TrueData ep2 GET /ltp: status={r.status_code} body={r.text[:500]}")
+        ltp = r.json().get("ltp", 0)
+        if ltp and ltp > 10000:
+            print(f"TrueData ep2: valid LTP={ltp}")
+            return round(ltp)
+    except Exception as e:
+        print(f"TrueData ep2 exception: {e}")
+
+    # Endpoint 3: POST /api/ltp
+    try:
+        r = requests.post(
+            "https://api.truedata.in/api/ltp",
+            json={**TRUEDATA_CREDS, "symbol": symbol},
+            timeout=10
+        )
+        print(f"TrueData ep3 POST /api/ltp: status={r.status_code} body={r.text[:500]}")
+        ltp = r.json().get("ltp", 0)
+        if ltp and ltp > 10000:
+            print(f"TrueData ep3: valid LTP={ltp}")
+            return round(ltp)
+    except Exception as e:
+        print(f"TrueData ep3 exception: {e}")
+
     return None
 
 def get_price():
