@@ -3,6 +3,7 @@ from flask_cors import CORS
 import requests, os
 import pg8000.native
 import pyotp
+import anthropic as anthropic_sdk
 from urllib.parse import urlparse
 
 app = Flask(__name__)
@@ -335,6 +336,27 @@ def signals_history():
     result = _to_dicts(conn, rows)
     conn.close()
     return jsonify(result)
+
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured"}), 500
+    data = request.get_json()
+    if not data or "messages" not in data:
+        return jsonify({"error": "messages is required"}), 400
+    try:
+        client = anthropic_sdk.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=data.get("model", "claude-sonnet-4-20250514"),
+            max_tokens=data.get("max_tokens", 900),
+            system=data.get("system", ""),
+            messages=data["messages"]
+        )
+        return jsonify({"content": [{"type": b.type, "text": b.text} for b in response.content]})
+    except Exception as e:
+        print(f"Anthropic API error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
