@@ -194,7 +194,7 @@ def get_truedata_price():
     try:
         r = requests.post(
             "https://api.truedata.in/getltp",
-            params={"symbol": "GOLDM", "td_app_user": "trial881", "td_app_password": "khyati881"},
+            json={"user_id": "trial881", "password": "khyati881", "symbols": ["GOLDM-I"]},
             timeout=10
         )
         print(f"TrueData: status={r.status_code} body={r.text[:300]}")
