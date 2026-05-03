@@ -5,6 +5,8 @@ import pg8000.native
 import pyotp
 import anthropic as anthropic_sdk
 from urllib.parse import urlparse
+from datetime import date, timedelta
+import calendar
 
 app = Flask(__name__)
 CORS(app)
@@ -167,6 +169,55 @@ def get_usd_inr():
     print("USD/INR: Frankfurter failed, returning None")
     return None
 
+RBI_DATES = [
+    date(2026, 2, 7), date(2026, 4, 9), date(2026, 6, 6),
+    date(2026, 8, 8), date(2026, 10, 7), date(2026, 12, 9),
+]
+
+FED_DATES = [
+    date(2026, 1, 29), date(2026, 3, 19), date(2026, 5, 7),
+    date(2026, 6, 18), date(2026, 7, 30), date(2026, 9, 17),
+    date(2026, 11, 5), date(2026, 12, 17),
+]
+
+def last_thursday(year, month):
+    """Return date of last Thursday in given month."""
+    last_day = calendar.monthrange(year, month)[1]
+    d = date(year, month, last_day)
+    # Thursday = weekday 3
+    offset = (d.weekday() - 3) % 7
+    return d - timedelta(days=offset)
+
+def event_soon(event_dates, today, window=2):
+    """Return True if today is within `window` days before any event date."""
+    for d in event_dates:
+        if timedelta(0) <= (d - today) <= timedelta(days=window):
+            return True
+    return False
+
+def get_india_vix():
+    """Fetch India VIX from NSE allIndices API."""
+    try:
+        r = requests.get(
+            "https://www.nseindia.com/api/allIndices",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json",
+                "Referer": "https://www.nseindia.com",
+            },
+            timeout=8
+        )
+        indices = r.json().get("data", [])
+        for idx in indices:
+            if idx.get("index") == "India VIX":
+                price = idx.get("last")
+                print(f"India VIX: {price}")
+                return price
+        print("India VIX: not found in response")
+    except Exception as e:
+        print(f"India VIX fetch failed: {e}")
+    return None
+
 def get_macro_data():
     result = {}
     for key, symbol in MACRO_SYMBOLS.items():
@@ -188,6 +239,15 @@ def get_macro_data():
             result[key] = {"symbol": symbol, "price": None, "change_pct": None}
 
     result["usd_inr"] = {"symbol": "USDINR=X", "price": get_usd_inr(), "change_pct": None}
+    result["india_vix"] = {"symbol": "INDIAVIX", "price": get_india_vix(), "change_pct": None}
+
+    today = date.today()
+    result["rbi_event_soon"] = event_soon(RBI_DATES, today)
+    result["fed_event_soon"] = event_soon(FED_DATES, today)
+
+    expiry = last_thursday(today.year, today.month)
+    result["expiry_week"] = timedelta(0) <= (expiry - today) <= timedelta(days=5)
+
     return result
 
 TRUEDATA_CREDS = {"user_id": "trial881", "password": "khyati881"}
