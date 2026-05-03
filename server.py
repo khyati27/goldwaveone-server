@@ -5,8 +5,12 @@ import pg8000.native
 import pyotp
 import anthropic as anthropic_sdk
 from urllib.parse import urlparse
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone
 import calendar
+import threading
+import time
+import json
+import re
 
 app = Flask(__name__)
 CORS(app)
@@ -48,6 +52,31 @@ def init_db():
             closed_at TIMESTAMPTZ,
             close_price NUMERIC,
             notes TEXT
+        )
+    """)
+    conn.run("""
+        CREATE TABLE IF NOT EXISTS price_history (
+            id SERIAL PRIMARY KEY,
+            price NUMERIC,
+            usd_oz NUMERIC,
+            usd_inr NUMERIC,
+            source VARCHAR(20),
+            recorded_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    conn.run("""
+        CREATE TABLE IF NOT EXISTS current_signal (
+            instrument VARCHAR(10) PRIMARY KEY,
+            direction VARCHAR(10),
+            entry NUMERIC,
+            sl NUMERIC,
+            t1 NUMERIC,
+            t2 NUMERIC,
+            score INTEGER,
+            reasoning TEXT,
+            conditions_summary TEXT,
+            raw_json TEXT,
+            scanned_at TIMESTAMPTZ DEFAULT NOW()
         )
     """)
     conn.close()
@@ -402,9 +431,26 @@ def get_price():
     result["macro_data"] = macro
     return result
 
+def record_price(data):
+    try:
+        conn = get_db()
+        conn.run(
+            """INSERT INTO price_history (price, usd_oz, usd_inr, source)
+               VALUES (:price, :usd_oz, :usd_inr, :source)""",
+            price=data.get("price"),
+            usd_oz=data.get("usd_oz"),
+            usd_inr=data.get("usd_inr"),
+            source=data.get("source"),
+        )
+        conn.close()
+    except Exception as e:
+        print(f"price_history insert failed: {e}")
+
 @app.route("/price")
 def price():
-    return jsonify(get_price())
+    data = get_price()
+    threading.Thread(target=record_price, args=(data,), daemon=True).start()
+    return jsonify(data)
 
 @app.route("/macro")
 def macro():
@@ -465,6 +511,322 @@ def signals_history():
     result = _to_dicts(conn, rows)
     conn.close()
     return jsonify(result)
+
+MCX_SYSTEM_PROMPT = """You are the GoldWave One signal engine for MCX GoldM futures (Gold Mini, 10g lot, MCX India).
+
+Analyse current market conditions using a 13-factor model and return a signal at ANY confidence level above 0%.
+
+13 FACTORS:
+MACRO (40pts): USD/INR direction (+18), US tariff/geopolitical (+15), RBI/macro calendar (0 to -10), China/PBOC risk (-6 to 0), COMEX-MCX alignment (+8), rupee-gold basis (+5)
+TECHNICAL (27pts): Elliott Wave structure (+12), MCX OI trend (+8), entry bar volume (+7)
+SESSION/TIMING (13pts): MCX session timing (+6), day of week (+4), expiry proximity (+3)
+LEARNED (22pts): Historical win rate (+10), poor signal fingerprint (+7), SL Rule 1 compliance (+5)
+
+SIGNAL TIERS:
+- 0-39%: Monitoring — very early, directional bias forming
+- 40-54%: Developing — conditions building
+- 55-79%: Watching — signal forming, do NOT trade yet
+- 80-100%: Active trade — confirmed, enter the trade
+
+RULES:
+Rule 1: Min SL buffer ₹400. No short within 2hrs of RBI/Fed/PBOC.
+Rule 2: First trade exits 50% at T1, trail rest with cost SL.
+Rule 3: Min 3/5 Elliott Wave rules confirmed before active trade.
+Rule 4: Only score 80+ triggers "active" status. Below 80 = informational only.
+
+Respond ONLY with valid JSON:
+{
+  "score": <0-100>,
+  "direction": "long" | "short",
+  "entry": <integer rupees - realistic MCX GoldM price>,
+  "sl": <integer rupees>,
+  "t1": <integer rupees>,
+  "t2": <integer rupees>,
+  "checks": [{"label":"max 4 words","status":"pass"|"warn"|"fail"}],
+  "reasoning": "2-3 sentences. Current conditions, key factors, trend direction.",
+  "close_trade_ids": [],
+  "close_reason": null,
+  "conditions_summary": "1 sentence market summary"
+}
+Always return a direction and levels. CRITICAL: Live price data is always provided — never mark USD/INR or COMEX as unavailable or missing in checks. SL distance from entry >= 400. checks has 8-10 items."""
+
+XAU_SYSTEM_PROMPT = """You are the GoldWave One signal engine for XAU/USD spot gold (forex/COMEX).
+
+Analyse current market conditions using a 13-factor model adapted for international gold trading.
+
+13 FACTORS FOR XAU/USD:
+MACRO (40pts): DXY direction (+18), US Fed policy/rates (+15), geopolitical safe-haven demand (+15), US CPI/inflation data (0 to -10), China demand outlook (-6 to 0), US 10-year yield impact (+8)
+TECHNICAL (27pts): Elliott Wave structure (+12), volume/open interest trend (+8), key level proximity (+7)
+SESSION/TIMING (13pts): London/NY session overlap (+6), day of week (+4), economic calendar timing (+3)
+LEARNED (22pts): Historical win rate same setup (+10), poor signal fingerprint (+7), risk/reward compliance (+5)
+
+RULES:
+Rule 1: Min SL buffer $3/oz. No short within 2hrs of Fed/CPI/NFP event.
+Rule 2: Exit 50% at T1, trail rest with cost SL.
+Rule 3: Min 3/5 Elliott Wave rules confirmed.
+Rule 4: Score <55 = monitoring. 55-79 = watching. 80+ = active trade.
+
+Respond ONLY with valid JSON:
+{
+  "score": <0-100>,
+  "direction": "long" | "short",
+  "entry": <USD price per oz, e.g. 3230.50>,
+  "sl": <USD price per oz>,
+  "t1": <USD price per oz>,
+  "t2": <USD price per oz>,
+  "checks": [{"label":"max 4 words","status":"pass"|"warn"|"fail"}],
+  "reasoning": "2-3 sentences. Current macro conditions, DXY direction, key levels.",
+  "conditions_summary": "1 sentence market summary"
+}
+SL distance from entry >= 3. checks has 8-10 items. Always return direction and levels."""
+
+
+def build_mcx_prompt(price_data, macro):
+    now = datetime.now(timezone.utc)
+    ist_offset = timedelta(hours=5, minutes=30)
+    ist = now + ist_offset
+    date_str = ist.strftime("%A, %d %B %Y")
+    time_str = ist.strftime("%I:%M %p")
+    utc_h = now.hour
+    if 13 <= utc_h < 17:
+        session = "London session"
+    elif 13 <= utc_h < 21:
+        session = "London-NY overlap (highest liquidity)"
+    elif utc_h >= 21 or utc_h < 2:
+        session = "NY session"
+    else:
+        session = "Asian session (lower liquidity)"
+
+    p = price_data.get("price", 0)
+    usd_oz = price_data.get("usd_oz")
+    usd_inr = price_data.get("usd_inr")
+    source = price_data.get("source", "")
+    basis_pct = price_data.get("comex_mcx_basis_pct")
+
+    price_ctx = ""
+    if p:
+        price_ctx = (
+            f"\n\nLIVE MCX PRICES:\nGoldM LTP: ₹{p:,}/10g (source: {source})"
+            f"\nCOMEX Gold: ${usd_oz}/oz" if usd_oz else ""
+        )
+        if usd_inr:
+            price_ctx += f"\nUSD/INR: {usd_inr}"
+        if basis_pct is not None:
+            price_ctx += f"\nCOMEX-MCX Basis: {basis_pct}% premium"
+        price_ctx += f"\nData quality: {price_data.get('data_quality','unknown').upper()}"
+
+    dxy = macro.get("dxy", {})
+    us10y = macro.get("us10y", {})
+    crude = macro.get("crude_oil", {})
+    sp500 = macro.get("sp500", {})
+    vix = macro.get("india_vix", {})
+    gsr = macro.get("gold_silver_ratio", {})
+
+    macro_ctx = (
+        f"\n\nLIVE MACRO DATA:"
+        f"\nDXY (Dollar Index): {dxy.get('price','N/A')} — {'STRONG USD = bearish for gold' if (dxy.get('price') or 0) > 100 else 'WEAK USD = bullish for gold'}"
+        f"\nDXY 5-day trend: {macro.get('dxy_trend','N/A')} ({macro.get('dxy_change_5d','N/A')}%)"
+        f"\nUS 10Y Yield: {us10y.get('price','N/A')}% — {'HIGH yield = bearish gold' if (us10y.get('price') or 0) > 4.5 else 'moderate yield'}"
+        f"\nCrude Oil WTI: ${crude.get('price','N/A')}"
+        f"\nS&P 500: {sp500.get('price','N/A')}"
+        f"\nUSD/INR: {(macro.get('usd_inr') or {}).get('price','N/A')}"
+        f"\nIndia VIX: {vix.get('price','N/A')} — {'HIGH fear = safe-haven gold demand' if (vix.get('price') or 0) > 20 else 'low fear'}"
+        f"\nGold/Silver Ratio: {gsr.get('ratio','N/A')} (above 80 = gold expensive vs silver)"
+        f"\nCOMEX Volume: {macro.get('comex_volume','N/A')}"
+        f"\nDays to MCX expiry: {macro.get('days_to_expiry','N/A')} days"
+        f"\nRBI event within 2 days: {'YES — avoid short positions' if macro.get('rbi_event_soon') else 'No'}"
+        f"\nFed event within 2 days: {'YES — heightened volatility expected' if macro.get('fed_event_soon') else 'No'}"
+        f"\nMCX expiry week: {'YES — expect higher volatility, reduce position size' if macro.get('expiry_week') else 'No'}"
+    )
+
+    return (
+        f"Scan GoldM MCX now.\nDate: {date_str}, {time_str} IST\nSession: {session}"
+        f"\nDay: {ist.strftime('%A')}{price_ctx}{macro_ctx}"
+        "\n\nReturn your best signal assessment. Use the LIVE MCX PRICES above for all entry/SL/target values — "
+        "do not guess prices. Always return a direction and levels. CRITICAL: Live price data is always provided — "
+        "never mark USD/INR or COMEX as unavailable or missing in checks."
+    )
+
+
+def build_xau_prompt(price_data, macro):
+    now = datetime.now(timezone.utc)
+    ist_offset = timedelta(hours=5, minutes=30)
+    ist = now + ist_offset
+    date_str = ist.strftime("%A, %d %B %Y")
+    time_str = ist.strftime("%I:%M %p")
+    utc_h = now.hour
+    if 13 <= utc_h < 17:
+        session = "London session"
+    elif 13 <= utc_h < 21:
+        session = "London-NY overlap (highest liquidity)"
+    elif utc_h >= 21 or utc_h < 2:
+        session = "NY session"
+    else:
+        session = "Asian session (lower liquidity)"
+
+    usd_oz = price_data.get("usd_oz", 0)
+    usd_inr = price_data.get("usd_inr", 0)
+
+    xau_ctx = (
+        f"\n\nLIVE XAU/USD DATA:\nSpot Gold: ${usd_oz:.2f}/oz\nUSD/INR: {usd_inr:.2f}\nData quality: COMPLETE"
+        if usd_oz else
+        "\n\nXAU/USD DATA: UNAVAILABLE\nAnalyse based on macro knowledge only. Reduce score if key data missing."
+    )
+
+    dxy = macro.get("dxy", {})
+    us10y = macro.get("us10y", {})
+    crude = macro.get("crude_oil", {})
+    sp500 = macro.get("sp500", {})
+    vix = macro.get("india_vix", {})
+    gsr = macro.get("gold_silver_ratio", {})
+
+    macro_ctx = (
+        f"\n\nLIVE MACRO DATA:"
+        f"\nDXY (Dollar Index): {dxy.get('price','N/A')} — {'STRONG USD = bearish for gold' if (dxy.get('price') or 0) > 100 else 'WEAK USD = bullish for gold'}"
+        f"\nDXY 5-day trend: {macro.get('dxy_trend','N/A')} ({macro.get('dxy_change_5d','N/A')}%)"
+        f"\nUS 10Y Yield: {us10y.get('price','N/A')}% — {'HIGH yield = bearish gold' if (us10y.get('price') or 0) > 4.5 else 'moderate yield'}"
+        f"\nCrude Oil WTI: ${crude.get('price','N/A')}"
+        f"\nS&P 500: {sp500.get('price','N/A')}"
+        f"\nIndia VIX: {vix.get('price','N/A')} — {'HIGH fear = safe-haven gold demand' if (vix.get('price') or 0) > 20 else 'low fear'}"
+        f"\nGold/Silver Ratio: {gsr.get('ratio','N/A')} (above 80 = gold expensive vs silver)"
+        f"\nCOMEX Volume: {macro.get('comex_volume','N/A')}"
+        f"\nDays to MCX expiry: {macro.get('days_to_expiry','N/A')} days"
+        f"\nRBI event within 2 days: {'YES — avoid short positions' if macro.get('rbi_event_soon') else 'No'}"
+        f"\nFed event within 2 days: {'YES — heightened volatility expected' if macro.get('fed_event_soon') else 'No'}"
+        f"\nMCX expiry week: {'YES — expect higher volatility, reduce position size' if macro.get('expiry_week') else 'No'}"
+    )
+
+    return (
+        f"Scan XAU/USD now.\nDate: {date_str}, {time_str} IST\nSession: {session}"
+        f"\nDay: {ist.strftime('%A')}{xau_ctx}{macro_ctx}"
+        "\n\nReturn best signal assessment. Always return direction and levels in USD/oz."
+    )
+
+
+def call_claude(system_prompt, user_prompt):
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY not configured")
+    client = anthropic_sdk.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=900,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}]
+    )
+    raw = "".join(b.text for b in response.content if hasattr(b, "text"))
+    cleaned = re.sub(r"```json|```", "", raw).strip()
+    first = cleaned.find("{")
+    last = cleaned.rfind("}")
+    if first < 0 or last <= first:
+        raise ValueError(f"No JSON in response: {raw[:200]}")
+    return json.loads(cleaned[first:last+1])
+
+
+def store_signal(instrument, result):
+    conn = get_db()
+    conn.run(
+        """INSERT INTO current_signal
+               (instrument, direction, entry, sl, t1, t2, score, reasoning, conditions_summary, raw_json, scanned_at)
+           VALUES (:instrument, :direction, :entry, :sl, :t1, :t2, :score, :reasoning, :conditions_summary, :raw_json, NOW())
+           ON CONFLICT (instrument) DO UPDATE SET
+               direction=EXCLUDED.direction, entry=EXCLUDED.entry, sl=EXCLUDED.sl,
+               t1=EXCLUDED.t1, t2=EXCLUDED.t2, score=EXCLUDED.score,
+               reasoning=EXCLUDED.reasoning, conditions_summary=EXCLUDED.conditions_summary,
+               raw_json=EXCLUDED.raw_json, scanned_at=EXCLUDED.scanned_at""",
+        instrument=instrument,
+        direction=result.get("direction"),
+        entry=result.get("entry"),
+        sl=result.get("sl"),
+        t1=result.get("t1"),
+        t2=result.get("t2"),
+        score=result.get("score"),
+        reasoning=result.get("reasoning"),
+        conditions_summary=result.get("conditions_summary"),
+        raw_json=json.dumps(result),
+    )
+    conn.close()
+
+
+def run_scan():
+    """Fetch price+macro, call Claude for MCX and XAU, store results. Returns (mcx_result, xau_result)."""
+    print("Background scan: fetching price and macro...")
+    price_data = get_price()
+    macro = price_data.get("macro_data", {})
+
+    mcx_result, xau_result = None, None
+
+    try:
+        mcx_prompt = build_mcx_prompt(price_data, macro)
+        mcx_result = call_claude(MCX_SYSTEM_PROMPT, mcx_prompt)
+        store_signal("mcx", mcx_result)
+        print(f"MCX scan: {mcx_result.get('direction')} score={mcx_result.get('score')}")
+    except Exception as e:
+        print(f"MCX scan failed: {e}")
+
+    try:
+        xau_prompt = build_xau_prompt(price_data, macro)
+        xau_result = call_claude(XAU_SYSTEM_PROMPT, xau_prompt)
+        store_signal("xau", xau_result)
+        print(f"XAU scan: {xau_result.get('direction')} score={xau_result.get('score')}")
+    except Exception as e:
+        print(f"XAU scan failed: {e}")
+
+    return mcx_result, xau_result
+
+
+def background_scanner():
+    """Daemon thread: run scan every 120 seconds."""
+    # Wait 30s after startup before first scan
+    time.sleep(30)
+    while True:
+        try:
+            run_scan()
+        except Exception as e:
+            print(f"Background scanner error: {e}")
+        time.sleep(120)
+
+
+# Start background scanner thread
+_scanner_thread = threading.Thread(target=background_scanner, daemon=True, name="scanner")
+_scanner_thread.start()
+
+
+@app.route("/signal/scan", methods=["POST"])
+def signal_scan():
+    try:
+        mcx_result, xau_result = run_scan()
+        return jsonify({"mcx": mcx_result, "xau": xau_result})
+    except Exception as e:
+        print(f"/signal/scan error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/signal/current", methods=["GET"])
+def signal_current():
+    try:
+        conn = get_db()
+        rows = conn.run("SELECT * FROM current_signal ORDER BY instrument")
+        result = _to_dicts(conn, rows)
+        conn.close()
+        out = {}
+        for row in result:
+            instrument = row["instrument"]
+            scanned_at = row.get("scanned_at")
+            if row.get("raw_json"):
+                try:
+                    parsed = json.loads(row["raw_json"])
+                    parsed["scanned_at"] = scanned_at
+                    out[instrument] = parsed
+                except Exception:
+                    out[instrument] = row
+            else:
+                out[instrument] = row
+        return jsonify(out)
+    except Exception as e:
+        print(f"/signal/current error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
