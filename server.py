@@ -227,28 +227,93 @@ def get_macro_data():
                 headers=YAHOO_HEADERS,
                 timeout=8
             )
-            meta = r.json()["chart"]["result"][0]["meta"]
+            data = r.json()["chart"]["result"][0]
+            meta = data["meta"]
             print(f"Macro fetch succeeded for {symbol}")
             result[key] = {
                 "symbol":     symbol,
                 "price":      meta.get("regularMarketPrice"),
                 "change_pct": meta.get("regularMarketChangePercent"),
+                "volume":     meta.get("regularMarketVolume"),
             }
         except Exception as e:
             print(f"Macro fetch failed for {symbol}: {e}")
-            result[key] = {"symbol": symbol, "price": None, "change_pct": None}
+            result[key] = {"symbol": symbol, "price": None, "change_pct": None, "volume": None}
 
     result["usd_inr"] = {"symbol": "USDINR=X", "price": get_usd_inr(), "change_pct": None}
     result["india_vix"] = {"symbol": "INDIAVIX", "price": get_india_vix(), "change_pct": None}
+
+    # Silver and Gold/Silver ratio
+    try:
+        r = requests.get(
+            "https://query2.finance.yahoo.com/v8/finance/chart/SI=F",
+            headers=YAHOO_HEADERS, timeout=8
+        )
+        silver_price = r.json()["chart"]["result"][0]["meta"].get("regularMarketPrice")
+        result["silver"] = {"symbol": "SI=F", "price": silver_price, "change_pct": None}
+        gold_price = result.get("gold_usd", {}).get("price")
+        if gold_price and silver_price and silver_price > 0:
+            ratio = round(gold_price / silver_price, 2)
+            result["gold_silver_ratio"] = {
+                "ratio": ratio,
+                "context": "gold expensive vs silver" if ratio > 80 else "normal range",
+            }
+            print(f"Gold/Silver ratio: {ratio}")
+        else:
+            result["gold_silver_ratio"] = {"ratio": None, "context": None}
+    except Exception as e:
+        print(f"Silver fetch failed: {e}")
+        result["silver"] = {"symbol": "SI=F", "price": None, "change_pct": None}
+        result["gold_silver_ratio"] = {"ratio": None, "context": None}
+
+    # DXY 5-day trend
+    try:
+        r = requests.get(
+            "https://query2.finance.yahoo.com/v8/finance/chart/DX-Y.NYB",
+            params={"range": "5d", "interval": "1d"},
+            headers=YAHOO_HEADERS, timeout=8
+        )
+        chart = r.json()["chart"]["result"][0]
+        closes = chart.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+        closes = [c for c in closes if c is not None]
+        if len(closes) >= 2:
+            dxy_old = closes[0]
+            dxy_now = closes[-1]
+            dxy_change_5d = round((dxy_now - dxy_old) / dxy_old * 100, 2)
+            result["dxy_trend"] = "rising" if dxy_change_5d > 0 else "falling"
+            result["dxy_change_5d"] = dxy_change_5d
+            print(f"DXY 5d trend: {result['dxy_trend']} ({dxy_change_5d}%)")
+        else:
+            result["dxy_trend"] = None
+            result["dxy_change_5d"] = None
+    except Exception as e:
+        print(f"DXY trend fetch failed: {e}")
+        result["dxy_trend"] = None
+        result["dxy_change_5d"] = None
+
+    # COMEX volume (already fetched via gold_usd / GC=F above)
+    result["comex_volume"] = result.get("gold_usd", {}).get("volume")
 
     today = date.today()
     result["rbi_event_soon"] = event_soon(RBI_DATES, today)
     result["fed_event_soon"] = event_soon(FED_DATES, today)
 
     expiry = last_thursday(today.year, today.month)
-    result["expiry_week"] = timedelta(0) <= (expiry - today) <= timedelta(days=5)
+    days_to_expiry = (expiry - today).days
+    result["expiry_week"] = 0 <= days_to_expiry <= 5
+    result["days_to_expiry"] = days_to_expiry
 
     return result
+
+
+def get_comex_mcx_basis(mcx_price, gold_usd, usd_inr):
+    """Calculate COMEX-MCX basis given live prices."""
+    if not all([mcx_price, gold_usd, usd_inr]):
+        return None, None
+    comex_inr = round(gold_usd * usd_inr * 10 / 31.1035)
+    basis = round(mcx_price - comex_inr)
+    basis_pct = round(basis / comex_inr * 100, 2) if comex_inr else None
+    return basis, basis_pct
 
 TRUEDATA_CREDS = {"user_id": "trial881", "password": "khyati881"}
 
@@ -329,6 +394,10 @@ def get_price():
         result["missing_fields"] = missing
     else:
         result["data_quality"] = "complete"
+
+    basis, basis_pct = get_comex_mcx_basis(result.get("price"), usd_oz, usd_inr)
+    result["comex_mcx_basis"] = basis
+    result["comex_mcx_basis_pct"] = basis_pct
 
     result["macro_data"] = macro
     return result
