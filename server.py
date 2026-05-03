@@ -51,9 +51,20 @@ def init_db():
             created_at TIMESTAMPTZ DEFAULT NOW(),
             closed_at TIMESTAMPTZ,
             close_price NUMERIC,
-            notes TEXT
+            notes TEXT,
+            score INTEGER,
+            checks JSONB
         )
     """)
+    # Add columns if table already exists without them
+    for col_sql in [
+        "ALTER TABLE signals ADD COLUMN IF NOT EXISTS score INTEGER",
+        "ALTER TABLE signals ADD COLUMN IF NOT EXISTS checks JSONB",
+    ]:
+        try:
+            conn.run(col_sql)
+        except Exception:
+            pass
     conn.run("""
         CREATE TABLE IF NOT EXISTS price_history (
             id SERIAL PRIMARY KEY,
@@ -460,6 +471,11 @@ def macro():
 def health():
     return jsonify({"status": "ok"})
 
+@app.route("/signals/patterns", methods=["GET"])
+def signals_patterns():
+    return jsonify(analyze_signal_patterns())
+
+
 @app.route("/signals", methods=["GET"])
 def get_signals():
     conn = get_db()
@@ -748,16 +764,173 @@ def store_signal(instrument, result):
     conn.close()
 
 
+DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+def analyze_signal_patterns():
+    """Query closed signals and calculate win-rate patterns and failed conditions."""
+    try:
+        conn = get_db()
+
+        # A win: buy closed above entry, or sell closed below entry
+        win_expr = """
+            CASE WHEN (type='buy'  AND close_price >= entry_price)
+                   OR (type='sell' AND close_price <= entry_price)
+            THEN 1 ELSE 0 END
+        """
+        base_filter = "status='closed' AND entry_price IS NOT NULL AND close_price IS NOT NULL"
+
+        # 1. win_rate_by_session — group by IST hour of created_at
+        rows = conn.run(f"""
+            SELECT
+                EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Kolkata')::INTEGER AS hour,
+                COUNT(*)::INTEGER AS total,
+                SUM({win_expr})::INTEGER AS wins
+            FROM signals
+            WHERE {base_filter}
+            GROUP BY hour
+            ORDER BY hour
+        """)
+        cols = [c['name'] for c in conn.columns]
+        session_rows = [dict(zip(cols, r)) for r in rows]
+        win_rate_by_session = {}
+        for r in session_rows:
+            h = r['hour']
+            if 9 <= h < 12:
+                label = "morning (9-12)"
+            elif 12 <= h < 15:
+                label = "afternoon (12-15)"
+            elif 15 <= h < 18:
+                label = "evening (15-18)"
+            elif 18 <= h < 23:
+                label = "night (18-23)"
+            else:
+                label = "off-hours"
+            bucket = win_rate_by_session.setdefault(label, {"total": 0, "wins": 0})
+            bucket["total"] += r["total"]
+            bucket["wins"]  += r["wins"]
+        for v in win_rate_by_session.values():
+            v["win_rate"] = round(v["wins"] / v["total"] * 100, 1) if v["total"] else None
+
+        # 2. win_rate_by_day — group by DOW (0=Sunday in pg)
+        rows = conn.run(f"""
+            SELECT
+                EXTRACT(DOW FROM created_at AT TIME ZONE 'Asia/Kolkata')::INTEGER AS dow,
+                COUNT(*)::INTEGER AS total,
+                SUM({win_expr})::INTEGER AS wins
+            FROM signals
+            WHERE {base_filter}
+            GROUP BY dow
+            ORDER BY dow
+        """)
+        cols = [c['name'] for c in conn.columns]
+        win_rate_by_day = {}
+        for r in [dict(zip(cols, row)) for row in rows]:
+            day_name = DAYS[r["dow"]]
+            total = r["total"]
+            wins  = r["wins"]
+            win_rate_by_day[day_name] = {
+                "total":    total,
+                "wins":     wins,
+                "win_rate": round(wins / total * 100, 1) if total else None,
+            }
+
+        # 3. win_rate_by_score_band
+        rows = conn.run(f"""
+            SELECT
+                CASE
+                    WHEN score >= 90 THEN '90-100'
+                    WHEN score >= 85 THEN '85-90'
+                    WHEN score >= 80 THEN '80-85'
+                    ELSE 'below-80'
+                END AS band,
+                COUNT(*)::INTEGER AS total,
+                SUM({win_expr})::INTEGER AS wins
+            FROM signals
+            WHERE {base_filter} AND score IS NOT NULL
+            GROUP BY band
+        """)
+        cols = [c['name'] for c in conn.columns]
+        win_rate_by_score_band = {}
+        for r in [dict(zip(cols, row)) for row in rows]:
+            band = r["band"]
+            total = r["total"]
+            wins  = r["wins"]
+            win_rate_by_score_band[band] = {
+                "total":    total,
+                "wins":     wins,
+                "win_rate": round(wins / total * 100, 1) if total else None,
+            }
+
+        # 4. failed_conditions — warn/fail check labels from losing trades
+        rows = conn.run(f"""
+            SELECT
+                chk->>'label' AS label,
+                COUNT(*)::INTEGER AS count
+            FROM signals,
+                 jsonb_array_elements(checks) AS chk
+            WHERE {base_filter}
+              AND checks IS NOT NULL
+              AND jsonb_typeof(checks) = 'array'
+              AND NOT ({win_expr.replace("THEN 1 ELSE 0 END", "THEN true ELSE false END")})
+              AND chk->>'status' IN ('warn', 'fail')
+            GROUP BY label
+            ORDER BY count DESC
+            LIMIT 10
+        """)
+        cols = [c['name'] for c in conn.columns]
+        failed_conditions = [dict(zip(cols, r)) for r in rows]
+
+        conn.close()
+        return {
+            "win_rate_by_session":    win_rate_by_session,
+            "win_rate_by_day":        win_rate_by_day,
+            "win_rate_by_score_band": win_rate_by_score_band,
+            "failed_conditions":      failed_conditions,
+            "note": "Patterns based on closed signals with entry_price and close_price recorded.",
+        }
+    except Exception as e:
+        print(f"analyze_signal_patterns error: {e}")
+        return {"error": str(e)}
+
+
+def format_patterns_for_prompt(patterns):
+    """Return a concise string of top poor-signal patterns for injection into Claude prompt."""
+    if not patterns or "error" in patterns:
+        return ""
+    lines = []
+    failed = patterns.get("failed_conditions", [])
+    if failed:
+        top3 = [f["label"] for f in failed[:3]]
+        lines.append(f"Top poor-signal conditions from history: {', '.join(top3)}")
+    by_session = patterns.get("win_rate_by_session", {})
+    worst = sorted(
+        [(k, v["win_rate"]) for k, v in by_session.items() if v.get("win_rate") is not None],
+        key=lambda x: x[1]
+    )
+    if worst:
+        lines.append(f"Worst session historically: {worst[0][0]} ({worst[0][1]}% win rate)")
+    by_day = patterns.get("win_rate_by_day", {})
+    worst_day = sorted(
+        [(k, v["win_rate"]) for k, v in by_day.items() if v.get("win_rate") is not None],
+        key=lambda x: x[1]
+    )
+    if worst_day:
+        lines.append(f"Worst day historically: {worst_day[0][0]} ({worst_day[0][1]}% win rate)")
+    return "\n\nHISTORICAL PATTERN WARNINGS:\n" + "\n".join(lines) if lines else ""
+
+
 def run_scan():
-    """Fetch price+macro, call Claude for MCX and XAU, store results. Returns (mcx_result, xau_result)."""
-    print("Background scan: fetching price and macro...")
+    """Fetch price+macro+patterns, call Claude for MCX and XAU, store results. Returns (mcx_result, xau_result)."""
+    print("Background scan: fetching price, macro, and patterns...")
     price_data = get_price()
     macro = price_data.get("macro_data", {})
+    patterns = analyze_signal_patterns()
+    pattern_ctx = format_patterns_for_prompt(patterns)
 
     mcx_result, xau_result = None, None
 
     try:
-        mcx_prompt = build_mcx_prompt(price_data, macro)
+        mcx_prompt = build_mcx_prompt(price_data, macro) + pattern_ctx
         mcx_result = call_claude(MCX_SYSTEM_PROMPT, mcx_prompt)
         store_signal("mcx", mcx_result)
         print(f"MCX scan: {mcx_result.get('direction')} score={mcx_result.get('score')}")
@@ -765,7 +938,7 @@ def run_scan():
         print(f"MCX scan failed: {e}")
 
     try:
-        xau_prompt = build_xau_prompt(price_data, macro)
+        xau_prompt = build_xau_prompt(price_data, macro) + pattern_ctx
         xau_result = call_claude(XAU_SYSTEM_PROMPT, xau_prompt)
         store_signal("xau", xau_result)
         print(f"XAU scan: {xau_result.get('direction')} score={xau_result.get('score')}")
