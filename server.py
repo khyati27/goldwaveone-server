@@ -893,30 +893,57 @@ def analyze_signal_patterns():
         return {"error": str(e)}
 
 
-def format_patterns_for_prompt(patterns):
-    """Return a concise string of top poor-signal patterns for injection into Claude prompt."""
+def build_learned_ctx(patterns):
+    """Build learnedCtx string from top 3 pattern insights in the specified sentence format."""
     if not patterns or "error" in patterns:
         return ""
+
     lines = []
+
+    # Session win rates — top 3 by total signals, formatted as sentences
+    by_session = patterns.get("win_rate_by_session", {})
+    session_with_data = [
+        (label, v) for label, v in by_session.items()
+        if v.get("win_rate") is not None and v.get("total", 0) >= 2
+    ]
+    for label, v in sorted(session_with_data, key=lambda x: -x[1]["total"])[:2]:
+        # Extract a representative hour from the label, e.g. "morning (9-12)" → "9"
+        hour_hint = label.split("(")[-1].split("-")[0].strip().rstrip(")")
+        lines.append(
+            f"Signals at {hour_hint}:00 IST ({label}) have {v['win_rate']}% win rate "
+            f"({v['wins']}/{v['total']} trades)"
+        )
+
+    # Score band win rates
+    by_score = patterns.get("win_rate_by_score_band", {})
+    for band in ("80-85", "85-90", "90-100"):
+        v = by_score.get(band)
+        if v and v.get("win_rate") is not None and v.get("total", 0) >= 1:
+            lines.append(
+                f"Score {band}% has {v['win_rate']}% win rate ({v['wins']}/{v['total']} trades)"
+            )
+
+    # Top 3 failed conditions
     failed = patterns.get("failed_conditions", [])
     if failed:
-        top3 = [f["label"] for f in failed[:3]]
-        lines.append(f"Top poor-signal conditions from history: {', '.join(top3)}")
-    by_session = patterns.get("win_rate_by_session", {})
-    worst = sorted(
-        [(k, v["win_rate"]) for k, v in by_session.items() if v.get("win_rate") is not None],
-        key=lambda x: x[1]
-    )
-    if worst:
-        lines.append(f"Worst session historically: {worst[0][0]} ({worst[0][1]}% win rate)")
+        top3 = [f['label'] for f in failed[:3]]
+        lines.append(f"Most common warn/fail conditions in losing trades: {', '.join(top3)}")
+
+    # Worst day
     by_day = patterns.get("win_rate_by_day", {})
     worst_day = sorted(
-        [(k, v["win_rate"]) for k, v in by_day.items() if v.get("win_rate") is not None],
+        [(k, v["win_rate"]) for k, v in by_day.items()
+         if v.get("win_rate") is not None and v.get("total", 0) >= 2],
         key=lambda x: x[1]
     )
     if worst_day:
-        lines.append(f"Worst day historically: {worst_day[0][0]} ({worst_day[0][1]}% win rate)")
-    return "\n\nHISTORICAL PATTERN WARNINGS:\n" + "\n".join(lines) if lines else ""
+        lines.append(
+            f"Worst trading day historically: {worst_day[0][0]} ({worst_day[0][1]}% win rate)"
+        )
+
+    if not lines:
+        return ""
+    return "\n\nLEARNED FROM PAST SIGNALS:\n" + "\n".join(f"- {l}" for l in lines[:3])
 
 
 def run_scan():
@@ -925,12 +952,12 @@ def run_scan():
     price_data = get_price()
     macro = price_data.get("macro_data", {})
     patterns = analyze_signal_patterns()
-    pattern_ctx = format_patterns_for_prompt(patterns)
+    learnedCtx = build_learned_ctx(patterns)
 
     mcx_result, xau_result = None, None
 
     try:
-        mcx_prompt = build_mcx_prompt(price_data, macro) + pattern_ctx
+        mcx_prompt = build_mcx_prompt(price_data, macro) + learnedCtx
         mcx_result = call_claude(MCX_SYSTEM_PROMPT, mcx_prompt)
         store_signal("mcx", mcx_result)
         print(f"MCX scan: {mcx_result.get('direction')} score={mcx_result.get('score')}")
@@ -938,7 +965,7 @@ def run_scan():
         print(f"MCX scan failed: {e}")
 
     try:
-        xau_prompt = build_xau_prompt(price_data, macro) + pattern_ctx
+        xau_prompt = build_xau_prompt(price_data, macro) + learnedCtx
         xau_result = call_claude(XAU_SYSTEM_PROMPT, xau_prompt)
         store_signal("xau", xau_result)
         print(f"XAU scan: {xau_result.get('direction')} score={xau_result.get('score')}")
