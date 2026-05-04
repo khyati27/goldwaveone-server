@@ -148,24 +148,16 @@ def event_soon(event_dates, today, window=2):
     return False
 
 def get_india_vix():
-    """Fetch India VIX from NSE allIndices API."""
+    """Fetch India VIX from Yahoo Finance (^INDIAVIX)."""
     try:
         r = requests.get(
-            "https://www.nseindia.com/api/allIndices",
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "application/json",
-                "Referer": "https://www.nseindia.com",
-            },
+            "https://query2.finance.yahoo.com/v8/finance/chart/%5EINDIAVIX",
+            headers=YAHOO_HEADERS,
             timeout=8
         )
-        indices = r.json().get("data", [])
-        for idx in indices:
-            if idx.get("index") == "India VIX":
-                price = idx.get("last")
-                print(f"India VIX: {price}")
-                return price
-        print("India VIX: not found in response")
+        price = r.json()["chart"]["result"][0]["meta"].get("regularMarketPrice")
+        print(f"India VIX (Yahoo): {price}")
+        return price
     except Exception as e:
         print(f"India VIX fetch failed: {e}")
     return None
