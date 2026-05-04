@@ -518,7 +518,30 @@ Respond ONLY with valid JSON:
 SL distance from entry >= 3.50 (includes spread). checks has 8-10 items. Always return direction and levels."""
 
 
-def build_mcx_prompt(price_data, macro):
+def get_price_history(limit=30):
+    """Fetch last `limit` MCX prices and XAU spot prices from price_history, newest first."""
+    try:
+        conn = get_db()
+        rows = conn.run(
+            "SELECT price, usd_oz FROM price_history ORDER BY recorded_at DESC LIMIT :limit",
+            limit=limit
+        )
+        mcx_prices = []
+        xau_prices = []
+        for row in rows:
+            price, usd_oz = row[0], row[1]
+            if price is not None:
+                mcx_prices.append(int(price))
+            if usd_oz is not None:
+                xau_prices.append(float(usd_oz))
+        conn.close()
+        return mcx_prices, xau_prices
+    except Exception as e:
+        print(f"get_price_history failed: {e}")
+        return [], []
+
+
+def build_mcx_prompt(price_data, macro, mcx_history=None):
     now = datetime.now(timezone.utc)
     ist_offset = timedelta(hours=5, minutes=30)
     ist = now + ist_offset
@@ -576,16 +599,25 @@ def build_mcx_prompt(price_data, macro):
         f"\nMCX expiry week: {'YES — expect higher volatility, reduce position size' if macro.get('expiry_week') else 'No'}"
     )
 
+    history_ctx = ""
+    if mcx_history:
+        history_ctx = (
+            f"\n\nPRICE HISTORY (last {len(mcx_history)} scans, ~2min intervals, newest first):\n"
+            f"{mcx_history}\n"
+            "Use this price series to identify Elliott Wave structure. Look for swing highs/lows, "
+            "wave count, and momentum direction. If a clear wave 3 or wave 5 is in progress mark Elliott Wave as pass."
+        )
+
     return (
         f"Scan GoldM MCX now.\nDate: {date_str}, {time_str} IST\nSession: {session}"
-        f"\nDay: {ist.strftime('%A')}{price_ctx}{macro_ctx}"
+        f"\nDay: {ist.strftime('%A')}{price_ctx}{macro_ctx}{history_ctx}"
         "\n\nReturn your best signal assessment. Use the LIVE MCX PRICES above for all entry/SL/target values — "
         "do not guess prices. Always return a direction and levels. CRITICAL: Live price data is always provided — "
         "never mark USD/INR or COMEX as unavailable or missing in checks."
     )
 
 
-def build_xau_prompt(price_data, macro):
+def build_xau_prompt(price_data, macro, xau_history=None):
     now = datetime.now(timezone.utc)
     ist_offset = timedelta(hours=5, minutes=30)
     ist = now + ist_offset
@@ -645,9 +677,18 @@ def build_xau_prompt(price_data, macro):
         f"\nMCX expiry week: {'YES — expect higher volatility, reduce position size' if macro.get('expiry_week') else 'No'}"
     )
 
+    history_ctx = ""
+    if xau_history:
+        history_ctx = (
+            f"\n\nPRICE HISTORY (last {len(xau_history)} scans, ~2min intervals, newest first):\n"
+            f"{xau_history}\n"
+            "Use this price series to identify Elliott Wave structure. Look for swing highs/lows, "
+            "wave count, and momentum direction. If a clear wave 3 or wave 5 is in progress mark Elliott Wave as pass."
+        )
+
     return (
         f"Scan XAU/USD now.\nDate: {date_str}, {time_str} IST\nSession: {session}"
-        f"\nDay: {ist.strftime('%A')}{xau_ctx}{macro_ctx}"
+        f"\nDay: {ist.strftime('%A')}{xau_ctx}{macro_ctx}{history_ctx}"
         "\n\nReturn best signal assessment. Always return direction and levels in USD/oz."
     )
 
@@ -893,18 +934,19 @@ def build_learned_ctx(patterns):
 
 def run_scan():
     """Fetch price+macro+patterns, call Claude for MCX and XAU, store results. Returns (mcx_result, xau_result)."""
-    print("Background scan: fetching price, macro, and patterns...")
+    print("Background scan: fetching price, macro, patterns, and price history...")
     price_data = get_price()
     macro = price_data.get("macro_data", {})
     patterns = analyze_signal_patterns()
     learnedCtx = build_learned_ctx(patterns)
+    mcx_history, xau_history = get_price_history(30)
 
     mcx_result, xau_result = None, None
     errors = []
 
     # MCX — Claude call and store are separate so each failure is independently logged
     try:
-        mcx_prompt = build_mcx_prompt(price_data, macro) + learnedCtx
+        mcx_prompt = build_mcx_prompt(price_data, macro, mcx_history) + learnedCtx
         mcx_result = call_claude(MCX_SYSTEM_PROMPT, mcx_prompt)
         print(f"MCX Claude returned: direction={mcx_result.get('direction')} score={mcx_result.get('score')}")
     except Exception as e:
@@ -920,7 +962,7 @@ def run_scan():
 
     # XAU — same pattern
     try:
-        xau_prompt = build_xau_prompt(price_data, macro) + learnedCtx
+        xau_prompt = build_xau_prompt(price_data, macro, xau_history) + learnedCtx
         xau_result = call_claude(XAU_SYSTEM_PROMPT, xau_prompt)
         print(f"XAU Claude returned: direction={xau_result.get('direction')} score={xau_result.get('score')}")
     except Exception as e:
