@@ -346,26 +346,35 @@ def get_macro_data():
     return result
 
 
-def get_xau_spot_price(gold_usd_fallback=None):
-    """Fetch live XAU/USD spot price. Returns price or None."""
+def get_xau_spot_price():
+    """Fetch live XAU/USD spot price from Yahoo Finance. Returns price or None."""
+    # Source 1: Yahoo Finance XAUUSD=X (spot)
     try:
-        token = os.environ.get("GOLDAPI_KEY", "goldapi-g4mr4smnuf9ldy-io")
         r = requests.get(
-            "https://www.goldapi.io/api/XAU/USD",
-            headers={"x-access-token": token, "Content-Type": "application/json"},
+            "https://query2.finance.yahoo.com/v8/finance/chart/XAUUSD=X",
+            headers=YAHOO_HEADERS,
             timeout=8
         )
-        print(f"GoldAPI: status={r.status_code} body={r.text[:200]}")
-        price = r.json().get("price")
+        price = r.json()["chart"]["result"][0]["meta"].get("regularMarketPrice")
         if price and float(price) > 500:
-            print(f"GoldAPI XAU/USD: {price}")
+            print(f"XAU spot (XAUUSD=X): {price}")
             return round(float(price), 2)
     except Exception as e:
-        print(f"GoldAPI failed: {e}")
+        print(f"Yahoo XAUUSD=X failed: {e}")
 
-    if gold_usd_fallback and gold_usd_fallback > 500:
-        print(f"XAU spot fallback: using gold_usd={gold_usd_fallback}")
-        return round(float(gold_usd_fallback), 2)
+    # Source 2: Yahoo Finance GC=F (COMEX front-month, close proxy)
+    try:
+        r = requests.get(
+            "https://query2.finance.yahoo.com/v8/finance/chart/GC=F",
+            headers=YAHOO_HEADERS,
+            timeout=8
+        )
+        price = r.json()["chart"]["result"][0]["meta"].get("regularMarketPrice")
+        if price and float(price) > 500:
+            print(f"XAU spot fallback (GC=F): {price}")
+            return round(float(price), 2)
+    except Exception as e:
+        print(f"Yahoo GC=F fallback failed: {e}")
 
     return None
 
@@ -463,7 +472,7 @@ def get_price():
     result["comex_mcx_basis"] = basis
     result["comex_mcx_basis_pct"] = basis_pct
 
-    xau_spot = get_xau_spot_price(gold_usd_fallback=usd_oz)
+    xau_spot = get_xau_spot_price()
     result["xau_spot"] = xau_spot
     if xau_spot:
         result["xau_bid"] = round(xau_spot - 0.30, 2)
@@ -794,7 +803,8 @@ def call_claude(system_prompt, user_prompt):
 def store_signal(instrument, result):
     """INSERT OR UPDATE current_signal row for instrument. Raises on any failure."""
     score = result.get("score", "?")
-    print(f"store_signal: saving {instrument.upper()} score={score} direction={result.get('direction')}")
+    label = instrument.upper()
+    print(f"Saving {label} signal to DB... (score={score} direction={result.get('direction')} entry={result.get('entry')})")
     try:
         conn = get_db()
         conn.run(
@@ -818,9 +828,12 @@ def store_signal(instrument, result):
             raw_json=json.dumps(result),
         )
         conn.close()
-        print(f"Saved {instrument.upper()} signal score: {score}")
+        print(f"Saved {label} signal score: {score}")
+        print(f"{label} signal saved successfully")
     except Exception as e:
-        print(f"store_signal({instrument}) FAILED: {e}")
+        import traceback
+        print(f"store_signal({label}) FAILED: {type(e).__name__}: {e}")
+        print(traceback.format_exc())
         raise
 
 
