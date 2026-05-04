@@ -187,6 +187,39 @@ def get_macro_data():
     result["usd_inr"] = {"symbol": "USDINR=X", "price": get_usd_inr(), "change_pct": None}
     result["india_vix"] = {"symbol": "INDIAVIX", "price": get_india_vix(), "change_pct": None}
 
+    # Gold intraday fields from GC=F (open, prev close, day high/low)
+    try:
+        r = requests.get(
+            "https://query2.finance.yahoo.com/v8/finance/chart/GC=F",
+            headers=YAHOO_HEADERS, timeout=8
+        )
+        meta = r.json()["chart"]["result"][0]["meta"]
+        result["gold_usd"]["open"]           = meta.get("regularMarketOpen")
+        result["gold_usd"]["prev_close"]     = meta.get("regularMarketPreviousClose")
+        result["gold_usd"]["day_high"]       = meta.get("regularMarketDayHigh")
+        result["gold_usd"]["day_low"]        = meta.get("regularMarketDayLow")
+        print(f"Gold intraday: open={result['gold_usd']['open']} high={result['gold_usd']['day_high']} low={result['gold_usd']['day_low']} prev_close={result['gold_usd']['prev_close']}")
+    except Exception as e:
+        print(f"Gold intraday fields fetch failed: {e}")
+        result["gold_usd"].update({"open": None, "prev_close": None, "day_high": None, "day_low": None})
+
+    # Nifty 50
+    try:
+        r = requests.get(
+            "https://query2.finance.yahoo.com/v8/finance/chart/%5ENSEI",
+            headers=YAHOO_HEADERS, timeout=8
+        )
+        meta = r.json()["chart"]["result"][0]["meta"]
+        result["nifty50"] = {
+            "symbol":     "^NSEI",
+            "price":      meta.get("regularMarketPrice"),
+            "change_pct": meta.get("regularMarketChangePercent"),
+        }
+        print(f"Nifty 50: {result['nifty50']['price']}")
+    except Exception as e:
+        print(f"Nifty 50 fetch failed: {e}")
+        result["nifty50"] = {"symbol": "^NSEI", "price": None, "change_pct": None}
+
     # Silver and Gold/Silver ratio
     try:
         r = requests.get(
@@ -573,6 +606,21 @@ def build_mcx_prompt(price_data, macro, mcx_history=None):
     sp500 = macro.get("sp500", {})
     vix = macro.get("india_vix", {})
     gsr = macro.get("gold_silver_ratio", {})
+    gold = macro.get("gold_usd", {})
+    nifty = macro.get("nifty50", {})
+
+    day_high   = gold.get("day_high")
+    day_low    = gold.get("day_low")
+    gold_open  = gold.get("open")
+    prev_close = gold.get("prev_close")
+    gold_price = gold.get("price")
+    if day_high and day_low and gold_price:
+        day_range = day_high - day_low
+        pct_from_high = round((day_high - gold_price) / day_range * 100) if day_range else None
+        level_hint = f"near day HIGH (resistance)" if pct_from_high is not None and pct_from_high < 20 else \
+                     f"near day LOW (support)" if pct_from_high is not None and pct_from_high > 80 else "mid-range"
+    else:
+        pct_from_high, level_hint = None, "N/A"
 
     macro_ctx = (
         f"\n\nLIVE MACRO DATA:"
@@ -581,9 +629,12 @@ def build_mcx_prompt(price_data, macro, mcx_history=None):
         f"\nUS 10Y Yield: {us10y.get('price','N/A')}% — {'HIGH yield = bearish gold' if (us10y.get('price') or 0) > 4.5 else 'moderate yield'}"
         f"\nCrude Oil WTI: ${crude.get('price','N/A')}"
         f"\nS&P 500: {sp500.get('price','N/A')}"
+        f"\nNifty 50: {nifty.get('price','N/A')} ({nifty.get('change_pct','N/A')}%)"
         f"\nUSD/INR: {(macro.get('usd_inr') or {}).get('price','N/A')}"
         f"\nIndia VIX: {vix.get('price','N/A')} — {'HIGH fear = safe-haven gold demand' if (vix.get('price') or 0) > 20 else 'low fear'}"
         f"\nGold/Silver Ratio: {gsr.get('ratio','N/A')} (above 80 = gold expensive vs silver)"
+        f"\nGold intraday (COMEX GC=F): Open=${gold_open} PrevClose=${prev_close} High=${day_high} Low=${day_low}"
+        f"\nPrice position: {level_hint}"
         f"\nCOMEX Volume today: {macro.get('comex_volume','N/A')} — "
         f"{'pass: high liquidity (>150k)' if (macro.get('comex_volume') or 0) > 150000 else 'warn: moderate liquidity (50k-150k)' if (macro.get('comex_volume') or 0) >= 50000 else 'fail: low liquidity (<50k)'}"
         f"\nDays to MCX expiry: {macro.get('days_to_expiry','N/A')} days"
@@ -653,6 +704,21 @@ def build_xau_prompt(price_data, macro, xau_history=None):
     sp500 = macro.get("sp500", {})
     vix = macro.get("india_vix", {})
     gsr = macro.get("gold_silver_ratio", {})
+    gold = macro.get("gold_usd", {})
+    nifty = macro.get("nifty50", {})
+
+    day_high   = gold.get("day_high")
+    day_low    = gold.get("day_low")
+    gold_open  = gold.get("open")
+    prev_close = gold.get("prev_close")
+    xau_price  = xau_spot or gold.get("price")
+    if day_high and day_low and xau_price:
+        day_range = day_high - day_low
+        pct_from_high = round((day_high - xau_price) / day_range * 100) if day_range else None
+        level_hint = "near day HIGH (resistance)" if pct_from_high is not None and pct_from_high < 20 else \
+                     "near day LOW (support)" if pct_from_high is not None and pct_from_high > 80 else "mid-range"
+    else:
+        pct_from_high, level_hint = None, "N/A"
 
     macro_ctx = (
         f"\n\nLIVE MACRO DATA:"
@@ -661,8 +727,11 @@ def build_xau_prompt(price_data, macro, xau_history=None):
         f"\nUS 10Y Yield: {us10y.get('price','N/A')}% — {'HIGH yield = bearish gold' if (us10y.get('price') or 0) > 4.5 else 'moderate yield'}"
         f"\nCrude Oil WTI: ${crude.get('price','N/A')}"
         f"\nS&P 500: {sp500.get('price','N/A')}"
+        f"\nNifty 50: {nifty.get('price','N/A')} ({nifty.get('change_pct','N/A')}%)"
         f"\nIndia VIX: {vix.get('price','N/A')} — {'HIGH fear = safe-haven gold demand' if (vix.get('price') or 0) > 20 else 'low fear'}"
         f"\nGold/Silver Ratio: {gsr.get('ratio','N/A')} (above 80 = gold expensive vs silver)"
+        f"\nGold intraday (COMEX GC=F): Open=${gold_open} PrevClose=${prev_close} High=${day_high} Low=${day_low}"
+        f"\nPrice position: {level_hint}"
         f"\nCOMEX Volume today: {macro.get('comex_volume','N/A')} — "
         f"{'pass: high liquidity (>150k)' if (macro.get('comex_volume') or 0) > 150000 else 'warn: moderate liquidity (50k-150k)' if (macro.get('comex_volume') or 0) >= 50000 else 'fail: low liquidity (<50k)'}"
         f"\nDays to MCX expiry: {macro.get('days_to_expiry','N/A')} days"
