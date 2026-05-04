@@ -1027,21 +1027,52 @@ def run_scan():
     return mcx_result, xau_result
 
 
+_scan_status = {
+    "last_scan_time": None,
+    "last_scan_ok": None,
+    "next_scan_time": None,
+    "scan_count": 0,
+    "last_error": None,
+}
+
+def run_background_scan():
+    """Thin wrapper around run_scan() that updates scan status tracking."""
+    _scan_status["scan_count"] += 1
+    run_scan()
+
+
 def background_scanner():
-    """Daemon thread: run scan every 120 seconds."""
+    """Daemon thread: run scan every 120 seconds. Never exits — catches all exceptions."""
     # Wait 30s after startup before first scan
+    _scan_status["next_scan_time"] = (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat()
     time.sleep(30)
     while True:
         try:
-            run_scan()
+            run_background_scan()
+            _scan_status["last_scan_time"] = datetime.now(timezone.utc).isoformat()
+            _scan_status["last_scan_ok"] = True
+            _scan_status["last_error"] = None
+            print(f"Background scan completed at {datetime.now()}")
         except Exception as e:
-            print(f"Background scanner error: {e}")
+            _scan_status["last_scan_time"] = datetime.now(timezone.utc).isoformat()
+            _scan_status["last_scan_ok"] = False
+            _scan_status["last_error"] = str(e)
+            print(f"Background scan error (will retry): {e}")
+        _scan_status["next_scan_time"] = (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat()
         time.sleep(120)
 
 
 # Start background scanner thread
 _scanner_thread = threading.Thread(target=background_scanner, daemon=True, name="scanner")
 _scanner_thread.start()
+
+
+@app.route("/scan/status", methods=["GET"])
+def scan_status():
+    return jsonify({
+        **_scan_status,
+        "thread_alive": _scanner_thread.is_alive(),
+    })
 
 
 @app.route("/signal/scan", methods=["POST"])
