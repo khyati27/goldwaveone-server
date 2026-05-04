@@ -259,20 +259,27 @@ def get_macro_data():
 
 
 def get_xau_spot_price():
-    """Fetch live XAU/USD spot price. GoldAPI primary, Yahoo Finance fallback."""
-    # Source 1: GoldAPI
-    try:
-        r = requests.get(
-            "https://www.goldapi.io/api/XAU/USD",
-            headers={"x-access-token": "goldapi-392899af90f3515d343e53a7e626ad1a-io"},
-            timeout=8
-        )
-        price = r.json().get("price")
-        if price and float(price) > 500:
-            print(f"XAU spot (GoldAPI): {price}")
-            return round(float(price), 2)
-    except Exception as e:
-        print(f"GoldAPI failed: {e}")
+    """Fetch live XAU/USD spot price. GoldAPI (both keys) primary, Yahoo Finance fallback."""
+    # Source 1: GoldAPI — try both keys in order
+    for key in [
+        "goldapi-392899af90f3515d343e53a7e626ad1a-io",
+        "goldapi-g4mr4smnuf9ldy-io",
+    ]:
+        try:
+            r = requests.get(
+                "https://www.goldapi.io/api/XAU/USD",
+                headers={"x-access-token": key},
+                timeout=8
+            )
+            if r.status_code == 403:
+                print(f"GoldAPI key {key[:20]}... quota exceeded (403), trying next key")
+                continue
+            price = r.json().get("price")
+            if price and float(price) > 500:
+                print(f"XAU spot (GoldAPI key={key[:20]}...): {price}")
+                return round(float(price), 2)
+        except Exception as e:
+            print(f"GoldAPI key {key[:20]}... failed: {e}")
 
     # Source 2: Yahoo Finance XAUUSD=X (spot)
     try:
