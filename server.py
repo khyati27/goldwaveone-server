@@ -259,8 +259,22 @@ def get_macro_data():
 
 
 def get_xau_spot_price():
-    """Fetch live XAU/USD spot price from Yahoo Finance. Returns price or None."""
-    # Source 1: Yahoo Finance XAUUSD=X (spot)
+    """Fetch live XAU/USD spot price. GoldAPI primary, Yahoo Finance fallback."""
+    # Source 1: GoldAPI
+    try:
+        r = requests.get(
+            "https://www.goldapi.io/api/XAU/USD",
+            headers={"x-access-token": "goldapi-392899af90f3515d343e53a7e626ad1a-io"},
+            timeout=8
+        )
+        price = r.json().get("price")
+        if price and float(price) > 500:
+            print(f"XAU spot (GoldAPI): {price}")
+            return round(float(price), 2)
+    except Exception as e:
+        print(f"GoldAPI failed: {e}")
+
+    # Source 2: Yahoo Finance XAUUSD=X (spot)
     try:
         r = requests.get(
             "https://query2.finance.yahoo.com/v8/finance/chart/XAUUSD=X",
@@ -274,7 +288,7 @@ def get_xau_spot_price():
     except Exception as e:
         print(f"Yahoo XAUUSD=X failed: {e}")
 
-    # Source 2: Yahoo Finance GC=F (COMEX front-month, close proxy)
+    # Source 3: Yahoo Finance GC=F (COMEX front-month, close proxy)
     try:
         r = requests.get(
             "https://query2.finance.yahoo.com/v8/finance/chart/GC=F",
