@@ -2,7 +2,6 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests, os
 import pg8000.native
-import pyotp
 import anthropic as anthropic_sdk
 from urllib.parse import urlparse
 from datetime import date, timedelta, datetime, timezone
@@ -97,93 +96,6 @@ try:
 except Exception as e:
     print(f"DB init warning: {e}")
 
-
-ANGEL_HEADERS = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "X-UserType": "USER",
-    "X-SourceID": "WEB",
-    "X-ClientLocalIP": "127.0.0.1",
-    "X-ClientPublicIP": "127.0.0.1",
-    "X-MACAddress": "00:00:00:00:00:00",
-}
-
-def get_angel_price():
-    """Fetch live MCX GoldM LTP via Angel One REST API. Returns INR price per 10g or None."""
-    try:
-        api_key     = os.environ.get("ANGEL_API_KEY")
-        client_id   = os.environ.get("ANGEL_CLIENT_ID")
-        pin         = os.environ.get("ANGEL_PIN")
-        totp_secret = os.environ.get("ANGEL_TOTP_SECRET")
-
-        if not all([api_key, client_id, pin, totp_secret]):
-            print("Angel: missing env vars")
-            return None
-
-        totp = pyotp.TOTP(totp_secret).now()
-        login_headers = {**ANGEL_HEADERS, "X-PrivateKey": api_key}
-
-        # Step 1: Login
-        auth_resp = requests.post(
-            "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword",
-            json={"clientcode": client_id, "password": pin, "totp": totp},
-            headers=login_headers,
-            timeout=10
-        )
-        print(f"Angel login: status={auth_resp.status_code} body={auth_resp.text[:300]}")
-        auth_data = auth_resp.json()
-        if not auth_data.get("status"):
-            print(f"Angel login failed: {auth_data.get('message')} errorcode={auth_data.get('errorcode')}")
-            return None
-
-        jwt_token = auth_data["data"]["jwtToken"]
-        auth_headers = {**login_headers, "Authorization": f"Bearer {jwt_token}"}
-
-        # Step 2: Search for active GoldM futures contract to get symbol token
-        search_resp = requests.get(
-            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/searchScrip",
-            params={"exchange": "MCX", "searchscrip": "GOLDM"},
-            headers=auth_headers,
-            timeout=10
-        )
-        print(f"Angel searchScrip: status={search_resp.status_code} body={search_resp.text[:300]}")
-        search_data = search_resp.json()
-        if not search_data.get("status") or not search_data.get("data"):
-            print(f"Angel searchScrip failed: {search_data.get('message')} errorcode={search_data.get('errorcode')}")
-            return None
-
-        contracts = [s for s in search_data["data"] if "FUT" in s.get("tradingsymbol", "")]
-        if not contracts:
-            print(f"No GoldM futures contracts found in {[s.get('tradingsymbol') for s in search_data['data']]}")
-            return None
-
-        token = contracts[0]["symboltoken"]
-        print(f"Angel: using contract {contracts[0].get('tradingsymbol')} token={token}")
-
-        # Step 3: Fetch LTP
-        ltp_resp = requests.post(
-            "https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/",
-            json={"mode": "LTP", "exchangeTokens": {"MCX": [token]}},
-            headers=auth_headers,
-            timeout=10
-        )
-        print(f"Angel LTP: status={ltp_resp.status_code} body={ltp_resp.text[:300]}")
-        ltp_data = ltp_resp.json()
-        if ltp_data.get("status") and ltp_data.get("data"):
-            fetched = ltp_data["data"].get("fetched", [])
-            if fetched:
-                ltp = fetched[0].get("ltp", 0)
-                print(f"Angel LTP value: {ltp}")
-                if ltp > 10000:
-                    return round(ltp)
-            else:
-                print(f"Angel LTP: empty fetched list, full data={ltp_data['data']}")
-        else:
-            print(f"Angel LTP failed: {ltp_data.get('message')} errorcode={ltp_data.get('errorcode')}")
-    except Exception as e:
-        print(f"Angel REST API exception: {e}")
-
-    return None
 
 YAHOO_HEADERS = {"User-Agent": "Mozilla/5.0"}
 
@@ -388,75 +300,14 @@ def get_comex_mcx_basis(mcx_price, gold_usd, usd_inr):
     basis_pct = round(basis / comex_inr * 100, 2) if comex_inr else None
     return basis, basis_pct
 
-TRUEDATA_CREDS = {"user_id": "trial881", "password": "khyati881"}
-
-def get_truedata_price():
-    """Probe TrueData endpoints for MCX GoldM LTP. Prints status and response for each."""
-    symbol = "GOLDM-I"
-
-    # Endpoint 1: GET /marketdata/ltp
-    try:
-        r = requests.get(
-            "https://api.truedata.in/marketdata/ltp",
-            params={**TRUEDATA_CREDS, "symbol": symbol},
-            timeout=10
-        )
-        print(f"TrueData ep1 GET /marketdata/ltp: status={r.status_code} body={r.text[:500]}")
-        ltp = r.json().get("ltp", 0)
-        if ltp and ltp > 10000:
-            print(f"TrueData ep1: valid LTP={ltp}")
-            return round(ltp)
-    except Exception as e:
-        print(f"TrueData ep1 exception: {e}")
-
-    # Endpoint 2: GET /ltp
-    try:
-        r = requests.get(
-            "https://api.truedata.in/ltp",
-            params={**TRUEDATA_CREDS, "symbol": symbol},
-            timeout=10
-        )
-        print(f"TrueData ep2 GET /ltp: status={r.status_code} body={r.text[:500]}")
-        ltp = r.json().get("ltp", 0)
-        if ltp and ltp > 10000:
-            print(f"TrueData ep2: valid LTP={ltp}")
-            return round(ltp)
-    except Exception as e:
-        print(f"TrueData ep2 exception: {e}")
-
-    # Endpoint 3: POST /api/ltp
-    try:
-        r = requests.post(
-            "https://api.truedata.in/api/ltp",
-            json={**TRUEDATA_CREDS, "symbol": symbol},
-            timeout=10
-        )
-        print(f"TrueData ep3 POST /api/ltp: status={r.status_code} body={r.text[:500]}")
-        ltp = r.json().get("ltp", 0)
-        if ltp and ltp > 10000:
-            print(f"TrueData ep3: valid LTP={ltp}")
-            return round(ltp)
-    except Exception as e:
-        print(f"TrueData ep3 exception: {e}")
-
-    return None
-
 def get_price():
     macro = get_macro_data()
     usd_inr = macro.get("usd_inr", {}).get("price")
     usd_oz  = macro.get("gold_usd", {}).get("price")
 
-    price = get_truedata_price()
-    source = "truedata"
-    if not price:
-        price = get_angel_price()
-        source = "angel"
-
-    if price:
-        result = {"price": price, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": source}
-    elif usd_oz and usd_inr:
+    if usd_oz and usd_inr:
         calc_price = round(usd_oz * usd_inr * (10 / 31.1035) * 1.0681)
-        print(f"Calculated MCX price: {calc_price} (usd_oz={usd_oz}, usd_inr={usd_inr})")
+        print(f"MCX calculated price: {calc_price} (GC=F={usd_oz}, USD/INR={usd_inr})")
         result = {"price": calc_price, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "calculated"}
     else:
         result = {"price": 0, "usd_oz": usd_oz, "usd_inr": usd_inr, "source": "unavailable"}
