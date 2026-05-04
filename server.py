@@ -621,10 +621,17 @@ SESSION/TIMING (13pts): London/NY session overlap (+6), day of week (+4), econom
 LEARNED (22pts): Historical win rate same setup (+10), poor signal fingerprint (+7), risk/reward compliance (+5)
 
 RULES:
-Rule 1: Min SL buffer $3/oz. No short within 2hrs of Fed/CPI/NFP event.
+Rule 1: Min SL buffer $3.50/oz including spread cost. No short within 2hrs of Fed/CPI/NFP event.
 Rule 2: Exit 50% at T1, trail rest with cost SL.
 Rule 3: Min 3/5 Elliott Wave rules confirmed.
 Rule 4: Score <55 = monitoring. 55-79 = watching. 80+ = active trade.
+
+CFD SPREAD CONTEXT:
+Current XAU/USD spot, Bid, and Ask prices are provided in the user message.
+Typical CFD spread: $0.30-0.50/oz (shown as ~$0.60 round-trip cost).
+Account for spread in SL placement — SL must be at least $3.50/oz from entry including spread cost.
+For a long: entry at Ask price, SL at least $3.50 below entry.
+For a short: entry at Bid price, SL at least $3.50 above entry.
 
 Respond ONLY with valid JSON:
 {
@@ -638,7 +645,7 @@ Respond ONLY with valid JSON:
   "reasoning": "2-3 sentences. Current macro conditions, DXY direction, key levels.",
   "conditions_summary": "1 sentence market summary"
 }
-SL distance from entry >= 3. checks has 8-10 items. Always return direction and levels."""
+SL distance from entry >= 3.50 (includes spread). checks has 8-10 items. Always return direction and levels."""
 
 
 def build_mcx_prompt(price_data, macro):
@@ -724,14 +731,26 @@ def build_xau_prompt(price_data, macro):
     else:
         session = "Asian session (lower liquidity)"
 
-    usd_oz = price_data.get("usd_oz", 0)
+    usd_oz  = price_data.get("usd_oz", 0)
     usd_inr = price_data.get("usd_inr", 0)
+    xau_spot = price_data.get("xau_spot")
+    xau_bid  = price_data.get("xau_bid")
+    xau_ask  = price_data.get("xau_ask")
 
-    xau_ctx = (
-        f"\n\nLIVE XAU/USD DATA:\nSpot Gold: ${usd_oz:.2f}/oz\nUSD/INR: {usd_inr:.2f}\nData quality: COMPLETE"
-        if usd_oz else
-        "\n\nXAU/USD DATA: UNAVAILABLE\nAnalyse based on macro knowledge only. Reduce score if key data missing."
-    )
+    if xau_spot:
+        xau_ctx = (
+            f"\n\nLIVE XAU/USD DATA:"
+            f"\nXAU/USD Spot: ${xau_spot:.2f}/oz"
+            f"\nBid: ${xau_bid:.2f}  Ask: ${xau_ask:.2f}"
+            f"\nTypical CFD spread: $0.30-0.50/oz — account for spread in SL placement"
+            f"\nUSD/INR: {usd_inr:.2f}\nData quality: COMPLETE"
+        )
+    elif usd_oz:
+        xau_ctx = (
+            f"\n\nLIVE XAU/USD DATA:\nSpot Gold (COMEX): ${usd_oz:.2f}/oz\nUSD/INR: {usd_inr:.2f}\nData quality: COMPLETE"
+        )
+    else:
+        xau_ctx = "\n\nXAU/USD DATA: UNAVAILABLE\nAnalyse based on macro knowledge only. Reduce score if key data missing."
 
     dxy = macro.get("dxy", {})
     us10y = macro.get("us10y", {})
