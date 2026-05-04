@@ -792,28 +792,36 @@ def call_claude(system_prompt, user_prompt):
 
 
 def store_signal(instrument, result):
-    conn = get_db()
-    conn.run(
-        """INSERT INTO current_signal
-               (instrument, direction, entry, sl, t1, t2, score, reasoning, conditions_summary, raw_json, scanned_at)
-           VALUES (:instrument, :direction, :entry, :sl, :t1, :t2, :score, :reasoning, :conditions_summary, :raw_json, NOW())
-           ON CONFLICT (instrument) DO UPDATE SET
-               direction=EXCLUDED.direction, entry=EXCLUDED.entry, sl=EXCLUDED.sl,
-               t1=EXCLUDED.t1, t2=EXCLUDED.t2, score=EXCLUDED.score,
-               reasoning=EXCLUDED.reasoning, conditions_summary=EXCLUDED.conditions_summary,
-               raw_json=EXCLUDED.raw_json, scanned_at=EXCLUDED.scanned_at""",
-        instrument=instrument,
-        direction=result.get("direction"),
-        entry=result.get("entry"),
-        sl=result.get("sl"),
-        t1=result.get("t1"),
-        t2=result.get("t2"),
-        score=result.get("score"),
-        reasoning=result.get("reasoning"),
-        conditions_summary=result.get("conditions_summary"),
-        raw_json=json.dumps(result),
-    )
-    conn.close()
+    """INSERT OR UPDATE current_signal row for instrument. Raises on any failure."""
+    score = result.get("score", "?")
+    print(f"store_signal: saving {instrument.upper()} score={score} direction={result.get('direction')}")
+    try:
+        conn = get_db()
+        conn.run(
+            """INSERT INTO current_signal
+                   (instrument, direction, entry, sl, t1, t2, score, reasoning, conditions_summary, raw_json, scanned_at)
+               VALUES (:instrument, :direction, :entry, :sl, :t1, :t2, :score, :reasoning, :conditions_summary, :raw_json, NOW())
+               ON CONFLICT (instrument) DO UPDATE SET
+                   direction=EXCLUDED.direction, entry=EXCLUDED.entry, sl=EXCLUDED.sl,
+                   t1=EXCLUDED.t1, t2=EXCLUDED.t2, score=EXCLUDED.score,
+                   reasoning=EXCLUDED.reasoning, conditions_summary=EXCLUDED.conditions_summary,
+                   raw_json=EXCLUDED.raw_json, scanned_at=EXCLUDED.scanned_at""",
+            instrument=instrument,
+            direction=result.get("direction"),
+            entry=result.get("entry"),
+            sl=result.get("sl"),
+            t1=result.get("t1"),
+            t2=result.get("t2"),
+            score=int(score) if str(score).isdigit() else result.get("score"),
+            reasoning=result.get("reasoning"),
+            conditions_summary=result.get("conditions_summary"),
+            raw_json=json.dumps(result),
+        )
+        conn.close()
+        print(f"Saved {instrument.upper()} signal score: {score}")
+    except Exception as e:
+        print(f"store_signal({instrument}) FAILED: {e}")
+        raise
 
 
 DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
@@ -1009,28 +1017,42 @@ def run_scan():
     mcx_result, xau_result = None, None
     errors = []
 
+    # MCX — Claude call and store are separate so each failure is independently logged
     try:
         mcx_prompt = build_mcx_prompt(price_data, macro) + learnedCtx
         mcx_result = call_claude(MCX_SYSTEM_PROMPT, mcx_prompt)
-        store_signal("mcx", mcx_result)
-        print(f"MCX scan: {mcx_result.get('direction')} score={mcx_result.get('score')}")
+        print(f"MCX Claude returned: direction={mcx_result.get('direction')} score={mcx_result.get('score')}")
     except Exception as e:
-        msg = f"MCX: {e}"
-        print(f"MCX scan failed: {e}")
-        errors.append(msg)
+        print(f"MCX Claude call failed: {e}")
+        errors.append(f"MCX Claude: {e}")
 
+    if mcx_result:
+        try:
+            store_signal("mcx", mcx_result)
+        except Exception as e:
+            print(f"MCX store failed: {e}")
+            errors.append(f"MCX store: {e}")
+
+    # XAU — same pattern
     try:
         xau_prompt = build_xau_prompt(price_data, macro) + learnedCtx
         xau_result = call_claude(XAU_SYSTEM_PROMPT, xau_prompt)
-        store_signal("xau", xau_result)
-        print(f"XAU scan: {xau_result.get('direction')} score={xau_result.get('score')}")
+        print(f"XAU Claude returned: direction={xau_result.get('direction')} score={xau_result.get('score')}")
     except Exception as e:
-        msg = f"XAU: {e}"
-        print(f"XAU scan failed: {e}")
-        errors.append(msg)
+        print(f"XAU Claude call failed: {e}")
+        errors.append(f"XAU Claude: {e}")
 
-    if errors and not mcx_result and not xau_result:
-        raise RuntimeError("; ".join(errors))
+    if xau_result:
+        try:
+            store_signal("xau", xau_result)
+        except Exception as e:
+            print(f"XAU store failed: {e}")
+            errors.append(f"XAU store: {e}")
+
+    if errors:
+        print(f"run_scan errors: {errors}")
+    if not mcx_result and not xau_result:
+        raise RuntimeError("; ".join(errors) if errors else "No signals generated")
 
     return mcx_result, xau_result
 
@@ -1045,8 +1067,8 @@ _scan_status = {
 
 def run_background_scan():
     """Thin wrapper around run_scan() that updates scan status tracking."""
-    _scan_status["scan_count"] += 1
     run_scan()
+    _scan_status["scan_count"] += 1
 
 
 def background_scanner():
