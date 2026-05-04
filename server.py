@@ -1007,6 +1007,7 @@ def run_scan():
     learnedCtx = build_learned_ctx(patterns)
 
     mcx_result, xau_result = None, None
+    errors = []
 
     try:
         mcx_prompt = build_mcx_prompt(price_data, macro) + learnedCtx
@@ -1014,7 +1015,9 @@ def run_scan():
         store_signal("mcx", mcx_result)
         print(f"MCX scan: {mcx_result.get('direction')} score={mcx_result.get('score')}")
     except Exception as e:
+        msg = f"MCX: {e}"
         print(f"MCX scan failed: {e}")
+        errors.append(msg)
 
     try:
         xau_prompt = build_xau_prompt(price_data, macro) + learnedCtx
@@ -1022,7 +1025,12 @@ def run_scan():
         store_signal("xau", xau_result)
         print(f"XAU scan: {xau_result.get('direction')} score={xau_result.get('score')}")
     except Exception as e:
+        msg = f"XAU: {e}"
         print(f"XAU scan failed: {e}")
+        errors.append(msg)
+
+    if errors and not mcx_result and not xau_result:
+        raise RuntimeError("; ".join(errors))
 
     return mcx_result, xau_result
 
