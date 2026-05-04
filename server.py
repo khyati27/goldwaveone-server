@@ -346,6 +346,41 @@ def get_macro_data():
     return result
 
 
+def get_xau_spot_price():
+    """Fetch live XAU/USD spot price. Returns price or None."""
+    # Source 1: GoldAPI
+    try:
+        token = os.environ.get("GOLDAPI_KEY", "goldapi-g4mr4smnuf9ldy-io")
+        r = requests.get(
+            "https://www.goldapi.io/api/XAU/USD",
+            headers={"x-access-token": token, "Content-Type": "application/json"},
+            timeout=8
+        )
+        print(f"GoldAPI: status={r.status_code} body={r.text[:200]}")
+        price = r.json().get("price")
+        if price and price > 500:
+            print(f"GoldAPI XAU/USD: {price}")
+            return round(float(price), 2)
+    except Exception as e:
+        print(f"GoldAPI failed: {e}")
+
+    # Source 2: Yahoo Finance XAUUSD=X
+    try:
+        r = requests.get(
+            "https://query2.finance.yahoo.com/v8/finance/chart/XAUUSD=X",
+            headers=YAHOO_HEADERS,
+            timeout=8
+        )
+        price = r.json()["chart"]["result"][0]["meta"].get("regularMarketPrice")
+        if price and price > 500:
+            print(f"Yahoo XAUUSD=X: {price}")
+            return round(float(price), 2)
+    except Exception as e:
+        print(f"Yahoo XAUUSD=X failed: {e}")
+
+    return None
+
+
 def get_comex_mcx_basis(mcx_price, gold_usd, usd_inr):
     """Calculate COMEX-MCX basis given live prices."""
     if not all([mcx_price, gold_usd, usd_inr]):
@@ -438,6 +473,15 @@ def get_price():
     basis, basis_pct = get_comex_mcx_basis(result.get("price"), usd_oz, usd_inr)
     result["comex_mcx_basis"] = basis
     result["comex_mcx_basis_pct"] = basis_pct
+
+    xau_spot = get_xau_spot_price()
+    result["xau_spot"] = xau_spot
+    if xau_spot:
+        result["xau_bid"] = round(xau_spot - 0.30, 2)
+        result["xau_ask"] = round(xau_spot + 0.30, 2)
+    else:
+        result["xau_bid"] = None
+        result["xau_ask"] = None
 
     result["macro_data"] = macro
     return result
