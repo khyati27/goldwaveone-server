@@ -346,9 +346,8 @@ def get_macro_data():
     return result
 
 
-def get_xau_spot_price():
+def get_xau_spot_price(gold_usd_fallback=None):
     """Fetch live XAU/USD spot price. Returns price or None."""
-    # Source 1: GoldAPI
     try:
         token = os.environ.get("GOLDAPI_KEY", "goldapi-g4mr4smnuf9ldy-io")
         r = requests.get(
@@ -358,25 +357,15 @@ def get_xau_spot_price():
         )
         print(f"GoldAPI: status={r.status_code} body={r.text[:200]}")
         price = r.json().get("price")
-        if price and price > 500:
+        if price and float(price) > 500:
             print(f"GoldAPI XAU/USD: {price}")
             return round(float(price), 2)
     except Exception as e:
         print(f"GoldAPI failed: {e}")
 
-    # Source 2: Yahoo Finance XAUUSD=X
-    try:
-        r = requests.get(
-            "https://query2.finance.yahoo.com/v8/finance/chart/XAUUSD=X",
-            headers=YAHOO_HEADERS,
-            timeout=8
-        )
-        price = r.json()["chart"]["result"][0]["meta"].get("regularMarketPrice")
-        if price and price > 500:
-            print(f"Yahoo XAUUSD=X: {price}")
-            return round(float(price), 2)
-    except Exception as e:
-        print(f"Yahoo XAUUSD=X failed: {e}")
+    if gold_usd_fallback and gold_usd_fallback > 500:
+        print(f"XAU spot fallback: using gold_usd={gold_usd_fallback}")
+        return round(float(gold_usd_fallback), 2)
 
     return None
 
@@ -474,7 +463,7 @@ def get_price():
     result["comex_mcx_basis"] = basis
     result["comex_mcx_basis_pct"] = basis_pct
 
-    xau_spot = get_xau_spot_price()
+    xau_spot = get_xau_spot_price(gold_usd_fallback=usd_oz)
     result["xau_spot"] = xau_spot
     if xau_spot:
         result["xau_bid"] = round(xau_spot - 0.30, 2)
