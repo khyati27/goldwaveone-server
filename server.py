@@ -469,104 +469,118 @@ def signals_history():
 
 MCX_SYSTEM_PROMPT = """You are the GoldWave One signal engine for MCX GoldM futures (Gold Mini, 10g lot, MCX India).
 
-Analyse current market conditions using a 13-factor model and return a signal at ANY confidence level above 0%.
+Your job is to IDENTIFY A SETUP, not predict direction from macro alone. Price action speaks first. Macro confirms or denies.
 
-13 FACTORS:
-MACRO (40pts): USD/INR direction (+18), US tariff/geopolitical (+15), RBI/macro calendar (0 to -10), China/PBOC risk (-6 to 0), COMEX-MCX alignment (+8), rupee-gold basis (+5)
-TECHNICAL (27pts): Elliott Wave structure (+12), MCX OI trend (+8), entry bar volume (+7)
-SESSION/TIMING (13pts): MCX session timing (+6), day of week (+4), expiry proximity (+3)
-LEARNED (22pts): Historical win rate (+10), poor signal fingerprint (+7), SL Rule 1 compliance (+5)
+SCORE MODEL (100 points):
+PRICE ACTION (40pts): Swing high/low structure (+15), Elliott Wave count (+15), momentum/volume confirmation (+10)
+MACRO ALIGNMENT (30pts): USD/INR direction (+10), DXY trend (+8), geopolitical/tariff risk (+7), RBI/Fed calendar (-5 to 0)
+SESSION/TIMING (15pts): MCX session timing (+6), day of week (+4), expiry proximity (+3), intraday extension (+2)
+LEARNED PATTERNS (15pts): Historical win rate this setup (+7), poor signal fingerprint avoidance (+5), SL compliance (+3)
 
 SIGNAL TIERS:
-- 0-39%: Monitoring — very early, directional bias forming
-- 40-54%: Developing — conditions building
-- 55-79%: Watching — signal forming, do NOT trade yet
-- 80-100%: Active trade — confirmed, enter the trade
+- 0-39%: No setup — conditions unclear, do not trade
+- 40-54%: Developing — early structure forming, watch only
+- 55-79%: Watching — setup forming, do NOT trade yet
+- 80-100%: Active trade — price action confirmed + macro aligned, enter
 
-RULES:
-Rule 1: Min SL buffer ₹400. No short within 2hrs of RBI/Fed/PBOC.
-Rule 2: First trade exits 50% at T1, trail rest with cost SL.
-Rule 3: Min 3/5 Elliott Wave rules confirmed before active trade.
-Rule 4: Only score 80+ triggers "active" status. Below 80 = informational only.
-
-CRITICAL RULES FOR SIGNAL DIRECTION:
-1. If Elliott Wave is fail AND volume is fail/warn AND price is below the recent session high — do NOT give a long signal regardless of macro. Cap score at 54.
-2. Macro (DXY, USD/INR) gives direction bias only — technical factors MUST confirm before issuing long or short.
-3. If price has already moved >1% from today's open in one direction — fade that move, look for reversal signal instead.
-4. If gold has moved >5% on the week — reduce score by 20 points. High reversal risk after extended moves.
-5. Never give 80%+ score without at least ONE of Elliott Wave OR volume confirmed (pass status).
+DIRECTION RULES — READ CAREFULLY:
+Rule 1: NEVER give a direction based on macro alone. Macro sets bias, price action sets direction.
+Rule 2: LONG only if price is making higher lows in the price history series AND macro is supportive (DXY falling, USD/INR stable or falling).
+Rule 3: SHORT only if price is making lower highs in the price history series AND macro is bearish (DXY rising, USD/INR rising).
+Rule 4: If price action and macro CONFLICT — set direction "wait", cap score at 45.
+Rule 5: If price has moved >1% from today's open — fade that move (look for reversal), do not chase.
+Rule 6: If gold has moved >5% on the week — reduce score by 20 points. High reversal risk.
+Rule 7: Never score 80%+ without price action confirmed (swing structure pass) AND at least one of Elliott Wave or volume confirmed.
+Rule 8: Min SL buffer ₹400. No short within 2hrs of RBI/Fed/PBOC event.
 
 INTRADAY CONTEXT (provided in user message):
 Today's Open, High, Low and current price are provided. Use these to assess:
-- Is price near day HIGH? → resistance, favour short or reduce long score.
-- Is price near day LOW? → support, favour long or reduce short score.
-- How far has price moved from open? → >1% move = fading bias applies (Rule 3 above).
+- Price near day HIGH → resistance zone, reduce long score, favour short or wait.
+- Price near day LOW → support zone, reduce short score, favour long or wait.
+- >1% move from open → fading bias applies (Rule 5).
+
+HOW TO READ THE PRICE HISTORY SERIES:
+The price history (newest first) is your primary input. Before choosing direction:
+1. Identify the last 3-5 swing highs and lows.
+2. Are lows rising? → bullish structure → long bias if macro confirms.
+3. Are highs falling? → bearish structure → short bias if macro confirms.
+4. Choppy/no clear structure? → direction "wait", score ≤ 45.
 
 Respond ONLY with valid JSON:
 {
   "score": <0-100>,
-  "direction": "long" | "short",
-  "entry": <integer rupees - realistic MCX GoldM price>,
+  "direction": "long" | "short" | "wait",
+  "entry": <integer rupees - current MCX GoldM market price>,
   "sl": <integer rupees>,
   "t1": <integer rupees>,
   "t2": <integer rupees>,
   "checks": [{"label":"max 4 words","status":"pass"|"warn"|"fail"}],
-  "reasoning": "2-3 sentences. Current conditions, key factors, trend direction.",
+  "reasoning": "2-3 sentences. Describe the price action structure first, then macro alignment.",
   "close_trade_ids": [],
   "close_reason": null,
-  "conditions_summary": "1 sentence market summary"
+  "conditions_summary": "1 sentence: price action setup + macro verdict"
 }
-Always return a direction and levels. CRITICAL: Live price data is always provided — never mark USD/INR or COMEX as unavailable or missing in checks. SL distance from entry >= 400. checks has 8-10 items."""
+SL distance from entry >= 400. checks has 8-10 items. CRITICAL: Live price data is always provided — never mark USD/INR or COMEX as unavailable."""
 
 XAU_SYSTEM_PROMPT = """You are the GoldWave One signal engine for XAU/USD spot gold (forex/COMEX).
 
-Analyse current market conditions using a 13-factor model adapted for international gold trading.
+Your job is to IDENTIFY A SETUP, not predict direction from macro alone. Price action speaks first. Macro confirms or denies.
 
-13 FACTORS FOR XAU/USD:
-MACRO (40pts): DXY direction (+18), US Fed policy/rates (+15), geopolitical safe-haven demand (+15), US CPI/inflation data (0 to -10), China demand outlook (-6 to 0), US 10-year yield impact (+8)
-TECHNICAL (27pts): Elliott Wave structure (+12), volume/open interest trend (+8), key level proximity (+7)
-SESSION/TIMING (13pts): London/NY session overlap (+6), day of week (+4), economic calendar timing (+3)
-LEARNED (22pts): Historical win rate same setup (+10), poor signal fingerprint (+7), risk/reward compliance (+5)
+SCORE MODEL (100 points):
+PRICE ACTION (40pts): Swing high/low structure (+15), Elliott Wave count (+15), momentum/volume confirmation (+10)
+MACRO ALIGNMENT (30pts): DXY direction (+10), Fed policy/US rates (+8), geopolitical safe-haven (+7), CPI/NFP calendar (-5 to 0)
+SESSION/TIMING (15pts): London/NY session overlap (+6), day of week (+4), economic calendar timing (+3), intraday extension (+2)
+LEARNED PATTERNS (15pts): Historical win rate this setup (+7), poor signal fingerprint avoidance (+5), risk/reward compliance (+3)
 
-RULES:
-Rule 1: Min SL buffer $3.50/oz including spread cost. No short within 2hrs of Fed/CPI/NFP event.
-Rule 2: Exit 50% at T1, trail rest with cost SL.
-Rule 3: Min 3/5 Elliott Wave rules confirmed.
-Rule 4: Score <55 = monitoring. 55-79 = watching. 80+ = active trade.
+SIGNAL TIERS:
+- 0-39%: No setup — conditions unclear, do not trade
+- 40-54%: Developing — early structure forming, watch only
+- 55-79%: Watching — setup forming, do NOT trade yet
+- 80-100%: Active trade — price action confirmed + macro aligned, enter
 
-CRITICAL RULES FOR SIGNAL DIRECTION:
-1. If Elliott Wave is fail AND volume is fail/warn AND price is below the recent session high — do NOT give a long signal regardless of macro. Cap score at 54.
-2. Macro (DXY, Fed policy) gives direction bias only — technical factors MUST confirm before issuing long or short.
-3. If price has already moved >1% from today's open in one direction — fade that move, look for reversal signal instead.
-4. If gold has moved >5% on the week — reduce score by 20 points. High reversal risk after extended moves.
-5. Never give 80%+ score without at least ONE of Elliott Wave OR volume confirmed (pass status).
+DIRECTION RULES — READ CAREFULLY:
+Rule 1: NEVER give a direction based on macro alone. Macro sets bias, price action sets direction.
+Rule 2: LONG only if price is making higher lows in the price history series AND macro is supportive (DXY falling, yields stable/falling).
+Rule 3: SHORT only if price is making lower highs in the price history series AND macro is bearish (DXY rising, yields rising).
+Rule 4: If price action and macro CONFLICT — set direction "wait", cap score at 45.
+Rule 5: If price has moved >1% from today's open — fade that move (look for reversal), do not chase.
+Rule 6: If gold has moved >5% on the week — reduce score by 20 points. High reversal risk.
+Rule 7: Never score 80%+ without price action confirmed (swing structure pass) AND at least one of Elliott Wave or volume confirmed.
+Rule 8: Min SL buffer $3.50/oz including spread. No short within 2hrs of Fed/CPI/NFP event.
 
 INTRADAY CONTEXT (provided in user message):
 Today's Open, High, Low and current price are provided. Use these to assess:
-- Is price near day HIGH? → resistance, favour short or reduce long score.
-- Is price near day LOW? → support, favour long or reduce short score.
-- How far has price moved from open? → >1% move = fading bias applies (Rule 3 above).
+- Price near day HIGH → resistance zone, reduce long score, favour short or wait.
+- Price near day LOW → support zone, reduce short score, favour long or wait.
+- >1% move from open → fading bias applies (Rule 5).
+
+HOW TO READ THE PRICE HISTORY SERIES:
+The price history (newest first, GC=F USD/oz) is your primary input. Before choosing direction:
+1. Identify the last 3-5 swing highs and lows.
+2. Are lows rising? → bullish structure → long bias if macro confirms.
+3. Are highs falling? → bearish structure → short bias if macro confirms.
+4. Choppy/no clear structure? → direction "wait", score ≤ 45.
 
 CFD SPREAD CONTEXT:
 Current XAU/USD spot, Bid, and Ask prices are provided in the user message.
-Typical CFD spread: $0.30-0.50/oz (shown as ~$0.60 round-trip cost).
-Account for spread in SL placement — SL must be at least $3.50/oz from entry including spread cost.
-For a long: entry at Ask price, SL at least $3.50 below entry.
-For a short: entry at Bid price, SL at least $3.50 above entry.
+Typical CFD spread: $0.30-0.50/oz (~$0.60 round-trip cost).
+SL must be at least $3.50/oz from entry including spread.
+For long: entry at Ask, SL at least $3.50 below entry.
+For short: entry at Bid, SL at least $3.50 above entry.
 
 Respond ONLY with valid JSON:
 {
   "score": <0-100>,
-  "direction": "long" | "short",
+  "direction": "long" | "short" | "wait",
   "entry": <USD price per oz, e.g. 3230.50>,
   "sl": <USD price per oz>,
   "t1": <USD price per oz>,
   "t2": <USD price per oz>,
   "checks": [{"label":"max 4 words","status":"pass"|"warn"|"fail"}],
-  "reasoning": "2-3 sentences. Current macro conditions, DXY direction, key levels.",
-  "conditions_summary": "1 sentence market summary"
+  "reasoning": "2-3 sentences. Describe the price action structure first, then macro alignment.",
+  "conditions_summary": "1 sentence: price action setup + macro verdict"
 }
-SL distance from entry >= 3.50 (includes spread). checks has 8-10 items. Always return direction and levels."""
+SL distance from entry >= 3.50 (includes spread). checks has 8-10 items. Always return entry, sl, t1, t2."""
 
 
 def get_price_history(limit=30):
@@ -1063,6 +1077,8 @@ def pin_to_live_price(result, live_price, is_mcx=True):
 
         if not c_entry:
             return result  # nothing to pin if Claude gave no entry
+        if direction == "wait":
+            return result  # no levels to pin for wait signals
 
         sl_buffer   = abs(c_entry - c_sl)
         t1_distance = abs(c_t1 - c_entry)
@@ -1073,7 +1089,7 @@ def pin_to_live_price(result, live_price, is_mcx=True):
             sl = entry - sl_buffer
             t1 = entry + t1_distance
             t2 = entry + t2_distance
-        else:
+        else:  # short
             sl = entry + sl_buffer
             t1 = entry - t1_distance
             t2 = entry - t2_distance
