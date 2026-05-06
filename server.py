@@ -1052,6 +1052,44 @@ def build_learned_ctx(patterns):
     return "\n\nLEARNED FROM PAST SIGNALS:\n" + "\n".join(f"- {l}" for l in lines[:3])
 
 
+def pin_to_live_price(result, live_price, is_mcx=True):
+    """Replace Claude's entry with live_price, preserving SL buffer and target distances."""
+    try:
+        direction   = result.get("direction", "long")
+        c_entry     = float(result.get("entry") or 0)
+        c_sl        = float(result.get("sl")    or 0)
+        c_t1        = float(result.get("t1")    or 0)
+        c_t2        = float(result.get("t2")    or 0)
+
+        if not c_entry:
+            return result  # nothing to pin if Claude gave no entry
+
+        sl_buffer   = abs(c_entry - c_sl)
+        t1_distance = abs(c_t1 - c_entry)
+        t2_distance = abs(c_t2 - c_entry)
+
+        entry = live_price
+        if direction == "long":
+            sl = entry - sl_buffer
+            t1 = entry + t1_distance
+            t2 = entry + t2_distance
+        else:
+            sl = entry + sl_buffer
+            t1 = entry - t1_distance
+            t2 = entry - t2_distance
+
+        # Round to integers for MCX (rupees), 2dp for XAU (USD)
+        rnd = round if is_mcx else lambda x, d=2: round(x, d)
+        result["entry"] = rnd(entry)
+        result["sl"]    = rnd(sl)
+        result["t1"]    = rnd(t1)
+        result["t2"]    = rnd(t2)
+        print(f"pin_to_live_price: entry={result['entry']} sl={result['sl']} t1={result['t1']} t2={result['t2']} (live={live_price}, dir={direction})")
+    except Exception as e:
+        print(f"pin_to_live_price failed (keeping Claude values): {e}")
+    return result
+
+
 def run_scan():
     """Fetch price+macro+patterns, call Claude for MCX and XAU, store results. Returns (mcx_result, xau_result)."""
     print("Background scan: fetching price, macro, patterns, and price history...")
@@ -1061,6 +1099,9 @@ def run_scan():
     learnedCtx = build_learned_ctx(patterns)
     mcx_history, xau_history = get_price_history(30)
 
+    mcx_live  = price_data.get("price")        # MCX rupees
+    xau_live  = price_data.get("xau_spot") or price_data.get("usd_oz")  # XAU USD/oz
+
     mcx_result, xau_result = None, None
     errors = []
 
@@ -1069,6 +1110,8 @@ def run_scan():
         mcx_prompt = build_mcx_prompt(price_data, macro, mcx_history) + learnedCtx
         mcx_result = call_claude(MCX_SYSTEM_PROMPT, mcx_prompt)
         print(f"MCX Claude returned: direction={mcx_result.get('direction')} score={mcx_result.get('score')}")
+        if mcx_live:
+            mcx_result = pin_to_live_price(mcx_result, mcx_live, is_mcx=True)
     except Exception as e:
         print(f"MCX Claude call failed: {e}")
         errors.append(f"MCX Claude: {e}")
@@ -1085,6 +1128,8 @@ def run_scan():
         xau_prompt = build_xau_prompt(price_data, macro, xau_history) + learnedCtx
         xau_result = call_claude(XAU_SYSTEM_PROMPT, xau_prompt)
         print(f"XAU Claude returned: direction={xau_result.get('direction')} score={xau_result.get('score')}")
+        if xau_live:
+            xau_result = pin_to_live_price(xau_result, xau_live, is_mcx=False)
     except Exception as e:
         print(f"XAU Claude call failed: {e}")
         errors.append(f"XAU Claude: {e}")
