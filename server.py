@@ -489,6 +489,19 @@ Rule 2: First trade exits 50% at T1, trail rest with cost SL.
 Rule 3: Min 3/5 Elliott Wave rules confirmed before active trade.
 Rule 4: Only score 80+ triggers "active" status. Below 80 = informational only.
 
+CRITICAL RULES FOR SIGNAL DIRECTION:
+1. If Elliott Wave is fail AND volume is fail/warn AND price is below the recent session high — do NOT give a long signal regardless of macro. Cap score at 54.
+2. Macro (DXY, USD/INR) gives direction bias only — technical factors MUST confirm before issuing long or short.
+3. If price has already moved >1% from today's open in one direction — fade that move, look for reversal signal instead.
+4. If gold has moved >5% on the week — reduce score by 20 points. High reversal risk after extended moves.
+5. Never give 80%+ score without at least ONE of Elliott Wave OR volume confirmed (pass status).
+
+INTRADAY CONTEXT (provided in user message):
+Today's Open, High, Low and current price are provided. Use these to assess:
+- Is price near day HIGH? → resistance, favour short or reduce long score.
+- Is price near day LOW? → support, favour long or reduce short score.
+- How far has price moved from open? → >1% move = fading bias applies (Rule 3 above).
+
 Respond ONLY with valid JSON:
 {
   "score": <0-100>,
@@ -520,6 +533,19 @@ Rule 1: Min SL buffer $3.50/oz including spread cost. No short within 2hrs of Fe
 Rule 2: Exit 50% at T1, trail rest with cost SL.
 Rule 3: Min 3/5 Elliott Wave rules confirmed.
 Rule 4: Score <55 = monitoring. 55-79 = watching. 80+ = active trade.
+
+CRITICAL RULES FOR SIGNAL DIRECTION:
+1. If Elliott Wave is fail AND volume is fail/warn AND price is below the recent session high — do NOT give a long signal regardless of macro. Cap score at 54.
+2. Macro (DXY, Fed policy) gives direction bias only — technical factors MUST confirm before issuing long or short.
+3. If price has already moved >1% from today's open in one direction — fade that move, look for reversal signal instead.
+4. If gold has moved >5% on the week — reduce score by 20 points. High reversal risk after extended moves.
+5. Never give 80%+ score without at least ONE of Elliott Wave OR volume confirmed (pass status).
+
+INTRADAY CONTEXT (provided in user message):
+Today's Open, High, Low and current price are provided. Use these to assess:
+- Is price near day HIGH? → resistance, favour short or reduce long score.
+- Is price near day LOW? → support, favour long or reduce short score.
+- How far has price moved from open? → >1% move = fading bias applies (Rule 3 above).
 
 CFD SPREAD CONTEXT:
 Current XAU/USD spot, Bid, and Ask prices are provided in the user message.
@@ -599,6 +625,19 @@ def build_mcx_prompt(price_data, macro, mcx_history=None):
         if basis_pct is not None:
             price_ctx += f"\nCOMEX-MCX Basis: {basis_pct}% premium"
         price_ctx += f"\nData quality: {price_data.get('data_quality','unknown').upper()}"
+
+    gold = macro.get("gold_usd", {})
+    gold_open  = gold.get("open")
+    day_high   = gold.get("day_high")
+    day_low    = gold.get("day_low")
+    prev_close = gold.get("prev_close")
+    if gold_open and usd_oz:
+        move_pct = round((usd_oz - gold_open) / gold_open * 100, 2)
+        move_str = f"+{move_pct}%" if move_pct >= 0 else f"{move_pct}%"
+        price_ctx += (
+            f"\nGold today: Open=${gold_open} High=${day_high} Low=${day_low} PrevClose=${prev_close}"
+            f"\nPrice vs open: {move_str} ({'EXTENDED — fading bias applies' if abs(move_pct) > 1 else 'within normal range'})"
+        )
 
     dxy = macro.get("dxy", {})
     us10y = macro.get("us10y", {})
@@ -683,6 +722,22 @@ def build_xau_prompt(price_data, macro, xau_history=None):
     xau_bid  = price_data.get("xau_bid")
     xau_ask  = price_data.get("xau_ask")
 
+    gold = macro.get("gold_usd", {})
+    gold_open_xau = gold.get("open")
+    day_high_xau  = gold.get("day_high")
+    day_low_xau   = gold.get("day_low")
+    prev_close_xau = gold.get("prev_close")
+    ref_price = xau_spot or usd_oz
+    if gold_open_xau and ref_price:
+        move_pct_xau = round((ref_price - gold_open_xau) / gold_open_xau * 100, 2)
+        move_str_xau = f"+{move_pct_xau}%" if move_pct_xau >= 0 else f"{move_pct_xau}%"
+        intraday_line = (
+            f"\nGold today: Open=${gold_open_xau} High=${day_high_xau} Low=${day_low_xau} PrevClose=${prev_close_xau}"
+            f"\nPrice vs open: {move_str_xau} ({'EXTENDED — fading bias applies' if abs(move_pct_xau) > 1 else 'within normal range'})"
+        )
+    else:
+        intraday_line = ""
+
     if xau_spot:
         xau_ctx = (
             f"\n\nLIVE XAU/USD DATA:"
@@ -690,10 +745,12 @@ def build_xau_prompt(price_data, macro, xau_history=None):
             f"\nBid: ${xau_bid:.2f}  Ask: ${xau_ask:.2f}"
             f"\nTypical CFD spread: $0.30-0.50/oz — account for spread in SL placement"
             f"\nUSD/INR: {usd_inr:.2f}\nData quality: COMPLETE"
+            f"{intraday_line}"
         )
     elif usd_oz:
         xau_ctx = (
             f"\n\nLIVE XAU/USD DATA:\nSpot Gold (COMEX): ${usd_oz:.2f}/oz\nUSD/INR: {usd_inr:.2f}\nData quality: COMPLETE"
+            f"{intraday_line}"
         )
     else:
         xau_ctx = "\n\nXAU/USD DATA: UNAVAILABLE\nAnalyse based on macro knowledge only. Reduce score if key data missing."
