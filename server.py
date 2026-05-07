@@ -1426,6 +1426,43 @@ def signal_current():
         return jsonify({"error": str(e)}), 500
 
 
+def build_live_market_prefix():
+    """Fetch current price and macro data and return a live market context string."""
+    try:
+        price_data = get_price()
+        macro = price_data.get("macro_data", {})
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+        gold_usd   = macro.get("gold_usd", {}).get("price")
+        xau_spot   = price_data.get("xau_spot")
+        mcx_price  = price_data.get("price")
+        usd_inr    = macro.get("usd_inr", {}).get("price")
+        dxy        = macro.get("dxy", {}).get("price")
+        us10y      = macro.get("us10y", {}).get("price")
+        crude      = macro.get("crude_oil", {}).get("price")
+        day_high   = macro.get("gold_usd", {}).get("day_high")
+        day_low    = macro.get("gold_usd", {}).get("day_low")
+
+        lines = [f"LIVE MARKET DATA AS OF {now_utc}:"]
+        if gold_usd:  lines.append(f"Gold COMEX GC=F: ${gold_usd}/oz")
+        if xau_spot:  lines.append(f"XAU/USD spot: ${xau_spot}/oz")
+        if mcx_price: lines.append(f"MCX GoldM: ₹{mcx_price:,}/10g")
+        if usd_inr:   lines.append(f"USD/INR: {usd_inr}")
+        if dxy:       lines.append(f"DXY: {dxy}")
+        if us10y:     lines.append(f"US 10Y Yield: {us10y}%")
+        if crude:     lines.append(f"Crude WTI: ${crude}/bbl")
+        if day_high and day_low:
+            lines.append(f"Gold today: High=${day_high} Low=${day_low}")
+        lines.append("USE THESE EXACT CURRENT PRICES — do not use training data prices.")
+
+        prefix = "\n".join(lines)
+        print(f"/analyze live prefix: gold={gold_usd} xau={xau_spot} mcx={mcx_price}")
+        return prefix
+    except Exception as e:
+        print(f"build_live_market_prefix failed: {e}")
+        return ""
+
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -1435,11 +1472,15 @@ def analyze():
     if not data or "messages" not in data:
         return jsonify({"error": "messages is required"}), 400
     try:
+        live_prefix = build_live_market_prefix()
+        frontend_system = data.get("system", "")
+        system = f"{live_prefix}\n\n{frontend_system}".strip() if live_prefix else frontend_system
+
         client = anthropic_sdk.Anthropic(api_key=api_key)
         response = client.messages.create(
             model=data.get("model", "claude-haiku-4-5-20251001"),
             max_tokens=data.get("max_tokens", 900),
-            system=data.get("system", ""),
+            system=system,
             messages=data["messages"]
         )
         return jsonify({"content": [{"type": b.type, "text": b.text} for b in response.content]})
