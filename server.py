@@ -1253,6 +1253,26 @@ def pin_to_live_price(result, live_price, is_mcx=True):
         result["sl"]    = rnd(sl)
         result["t1"]    = rnd(t1)
         result["t2"]    = rnd(t2)
+
+        # Validation
+        e, s, t = result["entry"], result["sl"], result["t1"]
+        if direction == "long":
+            if s >= e:
+                print(f"pin_to_live_price WARN: LONG sl={s} >= entry={e}, forcing sl = entry - buffer")
+                result["sl"] = rnd(e - max(sl_buffer, 1))
+            if t <= e:
+                print(f"pin_to_live_price WARN: LONG t1={t} <= entry={e}, forcing t1 = entry + distance")
+                result["t1"] = rnd(e + max(t1_distance, 1))
+                result["t2"] = rnd(e + max(t2_distance, t1_distance + 1))
+        else:  # short
+            if s <= e:
+                print(f"pin_to_live_price WARN: SHORT sl={s} <= entry={e}, forcing sl = entry + buffer")
+                result["sl"] = rnd(e + max(sl_buffer, 1))
+            if t >= e:
+                print(f"pin_to_live_price WARN: SHORT t1={t} >= entry={e}, forcing t1 = entry - distance")
+                result["t1"] = rnd(e - max(t1_distance, 1))
+                result["t2"] = rnd(e - max(t2_distance, t1_distance + 1))
+
         print(f"pin_to_live_price: entry={result['entry']} sl={result['sl']} t1={result['t1']} t2={result['t2']} (live={live_price}, dir={direction})")
     except Exception as e:
         print(f"pin_to_live_price failed (keeping Claude values): {e}")
