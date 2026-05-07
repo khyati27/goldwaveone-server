@@ -472,10 +472,11 @@ MCX_SYSTEM_PROMPT = """You are the GoldWave One signal engine for MCX GoldM futu
 Your job is to IDENTIFY A SETUP, not predict direction from macro alone. Price action speaks first. Macro confirms or denies.
 
 SCORE MODEL (100 points):
-PRICE ACTION (40pts): Swing high/low structure (+15), Elliott Wave count (+15), momentum/volume confirmation (+10)
-MACRO ALIGNMENT (30pts): USD/INR direction (+10), DXY trend (+8), geopolitical/tariff risk (+7), RBI/Fed calendar (-5 to 0)
-SESSION/TIMING (15pts): MCX session timing (+6), day of week (+4), expiry proximity (+3), intraday extension (+2)
-LEARNED PATTERNS (15pts): Historical win rate this setup (+7), poor signal fingerprint avoidance (+5), SL compliance (+3)
+TECHNICAL INDICATORS (35pts): RSI signal (+12), MACD direction (+12), Bollinger Band position (+11)
+PRICE AT SUPPORT/RESISTANCE (15pts): Distance from support/resistance levels, intraday high/low position (+15)
+MACRO ALIGNMENT (25pts): USD/INR direction (+10), DXY trend (+8), geopolitical/tariff risk (+7)
+SESSION/TIMING (15pts): MCX session timing (+6), day of week (+4), expiry proximity (+3), calendar events (+2)
+LEARNED PATTERNS (10pts): Historical win rate this setup (+5), poor signal fingerprint avoidance (+5)
 
 SIGNAL TIERS:
 - 0-39%: No setup — conditions unclear, do not trade
@@ -484,27 +485,27 @@ SIGNAL TIERS:
 - 80-100%: Active trade — price action confirmed + macro aligned, enter
 
 DIRECTION RULES — READ CAREFULLY:
-Rule 1: NEVER give a direction based on macro alone. Macro sets bias, price action sets direction.
-Rule 2: LONG only if price is making higher lows in the price history series AND macro is supportive (DXY falling, USD/INR stable or falling).
-Rule 3: SHORT only if price is making lower highs in the price history series AND macro is bearish (DXY rising, USD/INR rising).
-Rule 4: If price action and macro CONFLICT — set direction "wait", cap score at 45.
+Rule 1: NEVER give a direction based on macro alone. Indicators must confirm.
+Rule 2: LONG only if RSI < 70 (not overbought) AND price near support or lower Bollinger AND macro supportive.
+Rule 3: SHORT only if RSI > 30 (not oversold) AND price near resistance or upper Bollinger AND macro bearish.
+Rule 4: If indicators and macro CONFLICT — set direction "wait", cap score at 45.
 Rule 5: If price has moved >1% from today's open — fade that move (look for reversal), do not chase.
 Rule 6: If gold has moved >5% on the week — reduce score by 20 points. High reversal risk.
-Rule 7: Never score 80%+ without price action confirmed (swing structure pass) AND at least one of Elliott Wave or volume confirmed.
+Rule 7: Never score 80%+ without RSI AND at least one of MACD or Bollinger confirmed.
 Rule 8: Min SL buffer ₹400. No short within 2hrs of RBI/Fed/PBOC event.
+
+HOW TO USE THE TECHNICAL INDICATORS (provided in user message):
+RSI(14): below 30 = oversold = potential long. Above 70 = overbought = potential short. 30-70 = neutral.
+MACD: MACD > signal line = bullish momentum. MACD < signal = bearish momentum.
+Bollinger Bands: price at/below lower band = potential bounce (long). At/above upper = potential reversal (short).
+Support/Resistance: entry near support = good long risk/reward. Near resistance = good short risk/reward.
+Momentum: positive = bullish. Negative = bearish.
 
 INTRADAY CONTEXT (provided in user message):
 Today's Open, High, Low and current price are provided. Use these to assess:
 - Price near day HIGH → resistance zone, reduce long score, favour short or wait.
 - Price near day LOW → support zone, reduce short score, favour long or wait.
 - >1% move from open → fading bias applies (Rule 5).
-
-HOW TO READ THE PRICE HISTORY SERIES:
-The price history (newest first) is your primary input. Before choosing direction:
-1. Identify the last 3-5 swing highs and lows.
-2. Are lows rising? → bullish structure → long bias if macro confirms.
-3. Are highs falling? → bearish structure → short bias if macro confirms.
-4. Choppy/no clear structure? → direction "wait", score ≤ 45.
 
 Respond ONLY with valid JSON:
 {
@@ -515,10 +516,10 @@ Respond ONLY with valid JSON:
   "t1": <integer rupees>,
   "t2": <integer rupees>,
   "checks": [{"label":"max 4 words","status":"pass"|"warn"|"fail"}],
-  "reasoning": "2-3 sentences. Describe the price action structure first, then macro alignment.",
+  "reasoning": "2-3 sentences. State RSI/MACD/Bollinger reading first, then macro alignment.",
   "close_trade_ids": [],
   "close_reason": null,
-  "conditions_summary": "1 sentence: price action setup + macro verdict"
+  "conditions_summary": "1 sentence: indicator setup + macro verdict"
 }
 SL distance from entry >= 400. checks has 8-10 items. CRITICAL: Live price data is always provided — never mark USD/INR or COMEX as unavailable."""
 
@@ -527,39 +528,40 @@ XAU_SYSTEM_PROMPT = """You are the GoldWave One signal engine for XAU/USD spot g
 Your job is to IDENTIFY A SETUP, not predict direction from macro alone. Price action speaks first. Macro confirms or denies.
 
 SCORE MODEL (100 points):
-PRICE ACTION (40pts): Swing high/low structure (+15), Elliott Wave count (+15), momentum/volume confirmation (+10)
-MACRO ALIGNMENT (30pts): DXY direction (+10), Fed policy/US rates (+8), geopolitical safe-haven (+7), CPI/NFP calendar (-5 to 0)
+TECHNICAL INDICATORS (35pts): RSI signal (+12), MACD direction (+12), Bollinger Band position (+11)
+PRICE AT SUPPORT/RESISTANCE (15pts): Distance from support/resistance levels, intraday high/low position (+15)
+MACRO ALIGNMENT (25pts): DXY direction (+10), Fed policy/US rates (+8), geopolitical safe-haven (+7)
 SESSION/TIMING (15pts): London/NY session overlap (+6), day of week (+4), economic calendar timing (+3), intraday extension (+2)
-LEARNED PATTERNS (15pts): Historical win rate this setup (+7), poor signal fingerprint avoidance (+5), risk/reward compliance (+3)
+LEARNED PATTERNS (10pts): Historical win rate this setup (+5), poor signal fingerprint avoidance (+5)
 
 SIGNAL TIERS:
 - 0-39%: No setup — conditions unclear, do not trade
 - 40-54%: Developing — early structure forming, watch only
 - 55-79%: Watching — setup forming, do NOT trade yet
-- 80-100%: Active trade — price action confirmed + macro aligned, enter
+- 80-100%: Active trade — indicators confirmed + macro aligned, enter
 
 DIRECTION RULES — READ CAREFULLY:
-Rule 1: NEVER give a direction based on macro alone. Macro sets bias, price action sets direction.
-Rule 2: LONG only if price is making higher lows in the price history series AND macro is supportive (DXY falling, yields stable/falling).
-Rule 3: SHORT only if price is making lower highs in the price history series AND macro is bearish (DXY rising, yields rising).
-Rule 4: If price action and macro CONFLICT — set direction "wait", cap score at 45.
+Rule 1: NEVER give a direction based on macro alone. Indicators must confirm.
+Rule 2: LONG only if RSI < 70 (not overbought) AND price near support or lower Bollinger AND macro supportive (DXY falling, yields stable/falling).
+Rule 3: SHORT only if RSI > 30 (not oversold) AND price near resistance or upper Bollinger AND macro bearish (DXY rising, yields rising).
+Rule 4: If indicators and macro CONFLICT — set direction "wait", cap score at 45.
 Rule 5: If price has moved >1% from today's open — fade that move (look for reversal), do not chase.
 Rule 6: If gold has moved >5% on the week — reduce score by 20 points. High reversal risk.
-Rule 7: Never score 80%+ without price action confirmed (swing structure pass) AND at least one of Elliott Wave or volume confirmed.
+Rule 7: Never score 80%+ without RSI AND at least one of MACD or Bollinger confirmed.
 Rule 8: Min SL buffer $3.50/oz including spread. No short within 2hrs of Fed/CPI/NFP event.
+
+HOW TO USE THE TECHNICAL INDICATORS (provided in user message):
+RSI(14): below 30 = oversold = potential long. Above 70 = overbought = potential short. 30-70 = neutral.
+MACD: MACD > signal line = bullish momentum. MACD < signal = bearish momentum.
+Bollinger Bands: price at/below lower band = potential bounce (long). At/above upper = potential reversal (short).
+Support/Resistance: entry near support = good long risk/reward. Near resistance = good short risk/reward.
+Momentum: positive = bullish. Negative = bearish.
 
 INTRADAY CONTEXT (provided in user message):
 Today's Open, High, Low and current price are provided. Use these to assess:
 - Price near day HIGH → resistance zone, reduce long score, favour short or wait.
 - Price near day LOW → support zone, reduce short score, favour long or wait.
 - >1% move from open → fading bias applies (Rule 5).
-
-HOW TO READ THE PRICE HISTORY SERIES:
-The price history (newest first, GC=F USD/oz) is your primary input. Before choosing direction:
-1. Identify the last 3-5 swing highs and lows.
-2. Are lows rising? → bullish structure → long bias if macro confirms.
-3. Are highs falling? → bearish structure → short bias if macro confirms.
-4. Choppy/no clear structure? → direction "wait", score ≤ 45.
 
 CFD SPREAD CONTEXT:
 Current XAU/USD spot, Bid, and Ask prices are provided in the user message.
@@ -577,13 +579,13 @@ Respond ONLY with valid JSON:
   "t1": <USD price per oz>,
   "t2": <USD price per oz>,
   "checks": [{"label":"max 4 words","status":"pass"|"warn"|"fail"}],
-  "reasoning": "2-3 sentences. Describe the price action structure first, then macro alignment.",
-  "conditions_summary": "1 sentence: price action setup + macro verdict"
+  "reasoning": "2-3 sentences. State RSI/MACD/Bollinger reading first, then macro alignment.",
+  "conditions_summary": "1 sentence: indicator setup + macro verdict"
 }
 SL distance from entry >= 3.50 (includes spread). checks has 8-10 items. Always return entry, sl, t1, t2."""
 
 
-def get_price_history(limit=30):
+def get_price_history(limit=50):
     """Fetch last `limit` MCX prices and XAU spot prices from price_history, newest first."""
     try:
         conn = get_db()
@@ -606,7 +608,128 @@ def get_price_history(limit=30):
         return [], []
 
 
-def build_mcx_prompt(price_data, macro, mcx_history=None):
+def calculate_indicators(prices):
+    """Calculate RSI, MACD, Bollinger Bands, support/resistance, momentum, avg from a price list (newest first)."""
+    if not prices or len(prices) < 2:
+        return None
+
+    # Reverse so oldest first for sequential calculations
+    p = list(reversed(prices))
+    n = len(p)
+
+    def ema(values, period):
+        k = 2 / (period + 1)
+        result = [values[0]]
+        for v in values[1:]:
+            result.append(v * k + result[-1] * (1 - k))
+        return result
+
+    # RSI(14)
+    rsi = None
+    if n >= 15:
+        deltas = [p[i] - p[i-1] for i in range(1, n)]
+        gains  = [max(d, 0) for d in deltas]
+        losses = [abs(min(d, 0)) for d in deltas]
+        avg_gain = sum(gains[:14]) / 14
+        avg_loss = sum(losses[:14]) / 14
+        for i in range(14, len(deltas)):
+            avg_gain = (avg_gain * 13 + gains[i]) / 14
+            avg_loss = (avg_loss * 13 + losses[i]) / 14
+        if avg_loss == 0:
+            rsi = 100.0
+        else:
+            rs = avg_gain / avg_loss
+            rsi = round(100 - 100 / (1 + rs), 2)
+
+    # MACD (12, 26, 9)
+    macd_val = macd_signal = None
+    if n >= 26:
+        ema12 = ema(p, 12)
+        ema26 = ema(p, 26)
+        macd_line = [ema12[i] - ema26[i] for i in range(n)]
+        signal_line = ema(macd_line[25:], 9)  # signal starts after 26 periods
+        macd_val    = round(macd_line[-1], 2)
+        macd_signal = round(signal_line[-1], 2)
+
+    # Bollinger Bands (20)
+    bb_upper = bb_middle = bb_lower = None
+    if n >= 20:
+        window = p[-20:]
+        sma = sum(window) / 20
+        std = (sum((x - sma) ** 2 for x in window) / 20) ** 0.5
+        bb_middle = round(sma, 2)
+        bb_upper  = round(sma + 2 * std, 2)
+        bb_lower  = round(sma - 2 * std, 2)
+
+    # Support / Resistance (last 20 periods)
+    window20 = p[-20:] if n >= 20 else p
+    support    = round(min(window20), 2)
+    resistance = round(max(window20), 2)
+
+    # Momentum: (current - price 10 ago) / price 10 ago * 100
+    momentum = None
+    if n >= 11:
+        momentum = round((p[-1] - p[-11]) / p[-11] * 100, 2)
+
+    # Price vs 20-period average
+    avg20 = round(sum(window20) / len(window20), 2)
+    current = p[-1]
+    avg_diff = round(current - avg20, 2)
+    avg_position = "above" if current >= avg20 else "below"
+
+    # Bollinger position
+    bb_position = "N/A"
+    if bb_upper and bb_lower and bb_middle:
+        if current >= bb_upper:
+            bb_position = "at/above upper band (overbought)"
+        elif current <= bb_lower:
+            bb_position = "at/below lower band (oversold)"
+        elif current > bb_middle:
+            bb_position = "between middle and upper"
+        else:
+            bb_position = "between lower and middle"
+
+    return {
+        "rsi":          rsi,
+        "macd":         macd_val,
+        "macd_signal":  macd_signal,
+        "bb_upper":     bb_upper,
+        "bb_middle":    bb_middle,
+        "bb_lower":     bb_lower,
+        "bb_position":  bb_position,
+        "support":      support,
+        "resistance":   resistance,
+        "momentum":     momentum,
+        "avg20":        avg20,
+        "avg_diff":     avg_diff,
+        "avg_position": avg_position,
+        "current":      round(current, 2),
+    }
+
+
+def format_indicators_ctx(ind, label=""):
+    """Format calculated indicators into a prompt string."""
+    if not ind:
+        return "\n\nTECHNICAL INDICATORS: insufficient price history (need 26+ data points)"
+    prefix = f" ({label})" if label else ""
+    rsi_hint = "OVERBOUGHT — potential short" if (ind["rsi"] or 0) > 70 else \
+               "OVERSOLD — potential long" if (ind["rsi"] or 0) < 30 else "neutral"
+    macd_hint = "bullish momentum" if ind["macd"] is not None and ind["macd_signal"] is not None and ind["macd"] > ind["macd_signal"] else \
+                "bearish momentum" if ind["macd"] is not None and ind["macd_signal"] is not None else "N/A"
+    mom_str = f"{ind['momentum']:+.2f}%" if ind["momentum"] is not None else "N/A"
+    avg_str = f"{ind['avg_position']} by {abs(ind['avg_diff']):.2f}"
+    return (
+        f"\n\nTECHNICAL INDICATORS{prefix} (calculated from last {{}}) :\n"
+        f"RSI(14): {ind['rsi']} — {rsi_hint}\n"
+        f"MACD: {ind['macd']} signal={ind['macd_signal']} — {macd_hint}\n"
+        f"Bollinger Bands: upper={ind['bb_upper']} middle={ind['bb_middle']} lower={ind['bb_lower']} — price {ind['bb_position']}\n"
+        f"Support: {ind['support']}  Resistance: {ind['resistance']}\n"
+        f"Momentum 10-period: {mom_str}\n"
+        f"Price vs 20-period avg: {avg_str}"
+    )
+
+
+def build_mcx_prompt(price_data, macro, mcx_history=None, mcx_indicators=None):
     now = datetime.now(timezone.utc)
     ist_offset = timedelta(hours=5, minutes=30)
     ist = now + ist_offset
@@ -696,25 +819,40 @@ def build_mcx_prompt(price_data, macro, mcx_history=None):
         f"\nMCX expiry week: {'YES — expect higher volatility, reduce position size' if macro.get('expiry_week') else 'No'}"
     )
 
-    history_ctx = ""
-    if mcx_history:
-        history_ctx = (
-            f"\n\nPRICE HISTORY (last {len(mcx_history)} scans, ~2min intervals, newest first):\n"
-            f"{mcx_history}\n"
-            "Use this price series to identify Elliott Wave structure. Look for swing highs/lows, "
-            "wave count, and momentum direction. If a clear wave 3 or wave 5 is in progress mark Elliott Wave as pass."
+    indicators_ctx = ""
+    if mcx_indicators:
+        ind = mcx_indicators
+        rsi_hint = "OVERBOUGHT — potential short" if (ind["rsi"] or 0) > 70 else \
+                   "OVERSOLD — potential long" if (ind["rsi"] or 0) < 30 else "neutral"
+        macd_hint = "bullish momentum" if ind["macd"] is not None and ind["macd_signal"] is not None and ind["macd"] > ind["macd_signal"] else \
+                    "bearish momentum" if ind["macd"] is not None and ind["macd_signal"] is not None else "N/A"
+        mom_str = f"{ind['momentum']:+.2f}%" if ind["momentum"] is not None else "N/A"
+        avg_str = f"{ind['avg_position']} by ₹{abs(ind['avg_diff']):.0f}"
+        indicators_ctx = (
+            f"\n\nTECHNICAL INDICATORS (calculated from last {len(mcx_history or [])} MCX price scans):\n"
+            f"RSI(14): {ind['rsi']} — {rsi_hint}\n"
+            f"MACD: {ind['macd']} signal={ind['macd_signal']} — {macd_hint}\n"
+            f"Bollinger Bands: upper=₹{ind['bb_upper']} middle=₹{ind['bb_middle']} lower=₹{ind['bb_lower']} — price {ind['bb_position']}\n"
+            f"Support: ₹{ind['support']}  Resistance: ₹{ind['resistance']}\n"
+            f"Momentum 10-period: {mom_str}\n"
+            f"Price vs 20-period avg: {avg_str}"
+        )
+    elif mcx_history:
+        indicators_ctx = (
+            f"\n\nPRICE HISTORY (last {len(mcx_history)} scans, ~5min intervals, newest first):\n"
+            f"{mcx_history}"
         )
 
     return (
         f"Scan GoldM MCX now.\nDate: {date_str}, {time_str} IST\nSession: {session}"
-        f"\nDay: {ist.strftime('%A')}{price_ctx}{macro_ctx}{history_ctx}"
+        f"\nDay: {ist.strftime('%A')}{price_ctx}{macro_ctx}{indicators_ctx}"
         "\n\nReturn your best signal assessment. Use the LIVE MCX PRICES above for all entry/SL/target values — "
         "do not guess prices. Always return a direction and levels. CRITICAL: Live price data is always provided — "
         "never mark USD/INR or COMEX as unavailable or missing in checks."
     )
 
 
-def build_xau_prompt(price_data, macro, xau_history=None):
+def build_xau_prompt(price_data, macro, xau_history=None, xau_indicators=None):
     now = datetime.now(timezone.utc)
     ist_offset = timedelta(hours=5, minutes=30)
     ist = now + ist_offset
@@ -811,18 +949,33 @@ def build_xau_prompt(price_data, macro, xau_history=None):
         f"\nMCX expiry week: {'YES — expect higher volatility, reduce position size' if macro.get('expiry_week') else 'No'}"
     )
 
-    history_ctx = ""
-    if xau_history:
-        history_ctx = (
-            f"\n\nPRICE HISTORY (last {len(xau_history)} scans, ~2min intervals, newest first):\n"
-            f"{xau_history}\n"
-            "Use this price series to identify Elliott Wave structure. Look for swing highs/lows, "
-            "wave count, and momentum direction. If a clear wave 3 or wave 5 is in progress mark Elliott Wave as pass."
+    indicators_ctx = ""
+    if xau_indicators:
+        ind = xau_indicators
+        rsi_hint = "OVERBOUGHT — potential short" if (ind["rsi"] or 0) > 70 else \
+                   "OVERSOLD — potential long" if (ind["rsi"] or 0) < 30 else "neutral"
+        macd_hint = "bullish momentum" if ind["macd"] is not None and ind["macd_signal"] is not None and ind["macd"] > ind["macd_signal"] else \
+                    "bearish momentum" if ind["macd"] is not None and ind["macd_signal"] is not None else "N/A"
+        mom_str = f"{ind['momentum']:+.2f}%" if ind["momentum"] is not None else "N/A"
+        avg_str = f"{ind['avg_position']} by ${abs(ind['avg_diff']):.2f}"
+        indicators_ctx = (
+            f"\n\nTECHNICAL INDICATORS (calculated from last {len(xau_history or [])} XAU price scans):\n"
+            f"RSI(14): {ind['rsi']} — {rsi_hint}\n"
+            f"MACD: {ind['macd']} signal={ind['macd_signal']} — {macd_hint}\n"
+            f"Bollinger Bands: upper=${ind['bb_upper']} middle=${ind['bb_middle']} lower=${ind['bb_lower']} — price {ind['bb_position']}\n"
+            f"Support: ${ind['support']}  Resistance: ${ind['resistance']}\n"
+            f"Momentum 10-period: {mom_str}\n"
+            f"Price vs 20-period avg: {avg_str}"
+        )
+    elif xau_history:
+        indicators_ctx = (
+            f"\n\nPRICE HISTORY (last {len(xau_history)} scans, ~5min intervals, newest first):\n"
+            f"{xau_history}"
         )
 
     return (
         f"Scan XAU/USD now.\nDate: {date_str}, {time_str} IST\nSession: {session}"
-        f"\nDay: {ist.strftime('%A')}{xau_ctx}{macro_ctx}{history_ctx}"
+        f"\nDay: {ist.strftime('%A')}{xau_ctx}{macro_ctx}{indicators_ctx}"
         "\n\nReturn best signal assessment. Always return direction and levels in USD/oz."
     )
 
@@ -1113,7 +1266,11 @@ def run_scan():
     macro = price_data.get("macro_data", {})
     patterns = analyze_signal_patterns()
     learnedCtx = build_learned_ctx(patterns)
-    mcx_history, xau_history = get_price_history(30)
+    mcx_history, xau_history = get_price_history(50)
+    mcx_indicators = calculate_indicators(mcx_history)
+    xau_indicators = calculate_indicators(xau_history)
+    print(f"Indicators MCX: RSI={mcx_indicators and mcx_indicators.get('rsi')} MACD={mcx_indicators and mcx_indicators.get('macd')}")
+    print(f"Indicators XAU: RSI={xau_indicators and xau_indicators.get('rsi')} MACD={xau_indicators and xau_indicators.get('macd')}")
 
     mcx_live  = price_data.get("price")        # MCX rupees
     xau_live  = price_data.get("xau_spot") or price_data.get("usd_oz")  # XAU USD/oz
@@ -1123,7 +1280,7 @@ def run_scan():
 
     # MCX — Claude call and store are separate so each failure is independently logged
     try:
-        mcx_prompt = build_mcx_prompt(price_data, macro, mcx_history) + learnedCtx
+        mcx_prompt = build_mcx_prompt(price_data, macro, mcx_history, mcx_indicators) + learnedCtx
         mcx_result = call_claude(MCX_SYSTEM_PROMPT, mcx_prompt)
         print(f"MCX Claude returned: direction={mcx_result.get('direction')} score={mcx_result.get('score')}")
         if mcx_live:
@@ -1141,7 +1298,7 @@ def run_scan():
 
     # XAU — same pattern
     try:
-        xau_prompt = build_xau_prompt(price_data, macro, xau_history) + learnedCtx
+        xau_prompt = build_xau_prompt(price_data, macro, xau_history, xau_indicators) + learnedCtx
         xau_result = call_claude(XAU_SYSTEM_PROMPT, xau_prompt)
         print(f"XAU Claude returned: direction={xau_result.get('direction')} score={xau_result.get('score')}")
         if xau_live:
