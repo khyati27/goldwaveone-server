@@ -833,7 +833,7 @@ def call_claude(system_prompt, user_prompt):
         raise ValueError("ANTHROPIC_API_KEY not configured")
     client = anthropic_sdk.Anthropic(api_key=api_key)
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-haiku-4-5-20251001",
         max_tokens=900,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}]
@@ -1260,7 +1260,7 @@ def analyze():
     try:
         client = anthropic_sdk.Anthropic(api_key=api_key)
         response = client.messages.create(
-            model=data.get("model", "claude-sonnet-4-20250514"),
+            model=data.get("model", "claude-haiku-4-5-20251001"),
             max_tokens=data.get("max_tokens", 900),
             system=data.get("system", ""),
             messages=data["messages"]
