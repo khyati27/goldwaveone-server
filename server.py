@@ -1196,8 +1196,8 @@ def background_scanner():
             _scan_status["last_scan_ok"] = False
             _scan_status["last_error"] = str(e)
             print(f"Background scan error (will retry): {e}")
-        _scan_status["next_scan_time"] = (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat()
-        time.sleep(120)
+        _scan_status["next_scan_time"] = (datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat()
+        time.sleep(300)
 
 
 # Start background scanner thread
