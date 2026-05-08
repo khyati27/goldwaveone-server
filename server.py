@@ -1463,6 +1463,8 @@ def build_live_market_prefix():
         return ""
 
 
+GOLD_KEYWORDS = {"gold", "xau", "mcx", "goldm"}
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -1472,9 +1474,24 @@ def analyze():
     if not data or "messages" not in data:
         return jsonify({"error": "messages is required"}), 400
     try:
-        live_prefix = build_live_market_prefix()
         frontend_system = data.get("system", "")
-        system = f"{live_prefix}\n\n{frontend_system}".strip() if live_prefix else frontend_system
+
+        # Detect instrument from message content
+        all_text = " ".join(
+            m.get("content", "") if isinstance(m.get("content"), str)
+            else " ".join(b.get("text", "") for b in m.get("content", []) if isinstance(b, dict))
+            for m in data["messages"]
+        ).lower()
+        is_gold = any(kw in all_text for kw in GOLD_KEYWORDS)
+        instrument_label = "gold/XAU/MCX" if is_gold else "non-gold instrument"
+        print(f"/analyze: instrument={instrument_label}")
+
+        # Only inject live gold context for gold-related queries
+        if is_gold:
+            live_prefix = build_live_market_prefix()
+            system = f"{live_prefix}\n\n{frontend_system}".strip() if live_prefix else frontend_system
+        else:
+            system = frontend_system
 
         client = anthropic_sdk.Anthropic(api_key=api_key)
         response = client.messages.create(
